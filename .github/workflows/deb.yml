@@ -9,6 +9,10 @@ on:
         description: Publish a GitHub Release after verification
         type: boolean
         default: false
+      replace_tag:
+        description: Move an existing version tag to this commit when publishing from a branch
+        type: boolean
+        default: false
       prerelease:
         description: Mark the release as a prerelease
         type: boolean
@@ -90,7 +94,13 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    concurrency:
+      group: release-${{ needs.build.outputs.version }}
+      cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: synquay-deb-amd64
@@ -102,22 +112,5 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
           COMMIT: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          cd packages
-          sha256sum --check SHA256SUMS
-          TAG="v$VERSION"
-          # Never delete or overwrite an existing release/tag to retry a version.
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo 'Release already exists; increment the version instead of overwriting it.' >&2
-            exit 1
-          fi
-          # A manually published release must not attach to a tag for another commit.
-          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1 && [[ "$GITHUB_REF_TYPE" != tag ]]; then
-            echo 'Tag already exists; run the workflow on that tag or choose a new version.' >&2
-            exit 1
-          fi
-          printf 'Synquay %s\n\nInstall: sudo apt install ./synquay_*.deb\nConsole: http://127.0.0.1:8080/\nService: systemctl status synquay\n' "$VERSION" > notes.txt
-          flags=()
-          if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
-          gh release create "$TAG" ./*.deb SHA256SUMS --target "$COMMIT" --title "Synquay $VERSION" --notes-file notes.txt "${flags[@]}"
+          REPLACE_TAG: ${{ inputs.replace_tag }}
+        run: bash scripts/publish-release.sh packages

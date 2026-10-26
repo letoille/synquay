@@ -101,7 +101,10 @@ sudo apt -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confol
 - 勾选 `publish`：验证成功后发布 `v<版本>` 的 GitHub Release。
 - 推送 `v*` 标签：标签必须与根 `Cargo.toml` 的 workspace 版本完全一致，成功后发布 Release。
 - 发布包含 `.deb` 与 SHA256；预发布版本自动标记 prerelease，也可手动勾选。
-- 已有 Release 不删除、不覆盖，重新发版应增加版本。发布 Job 才有 `contents: write` 权限。
+- 已有 Release 保留其页面，覆盖同名 `.deb` 和 `SHA256SUMS`，更新标题、说明和预发布状态；其他附件保留。发布 Job 才有 `contents: write` 权限，同版本发布串行执行。
+- 同一提交重跑可直接覆盖。若标签指向其他提交，默认拒绝；从分支手动运行并勾选 `publish` 和 `replace_tag`，可将版本标签移动到本次提交并覆盖发布。标签触发或从标签手动运行不允许移动标签。已开启不可变发布或标签保护时可能无法覆盖，需要新版本或调整仓库规则。
+- 附件覆盖不是原子操作；上传中断可能暂时缺少附件或校验文件与包不匹配，需重新运行发布完成覆盖。同版本替换的包不会因版本号不变而被 apt 自动判定为升级，可重新下载后使用 `sudo apt install --reinstall ./synquay_*.deb` 安装。
+- 修改工作流后需提交并推送，从更新后的分支新建一次运行；旧运行的 Re-run 会继续使用旧提交中的工作流。
 - 当前 CI 使用 Ubuntu 22.04 原生 amd64，面向 Ubuntu 22.04+ / Debian 12+；动态库最低版本由 `$auto` 依赖分析写入包，不假定可安装到更老发行版。
 - Rust 缓存只在默认分支写入；建议第一次在默认分支手动构建，后续标签构建可复用缓存。
 
