@@ -61,6 +61,22 @@ ssh -L 8080:127.0.0.1:8080 user@server
 
 管理台尚无登录鉴权，不应直接公开整个监听端口。接入 QQ 时，由 HTTPS 反向代理仅转发 `/api/qq/<连接ID>/webhook` 到 `127.0.0.1:8080`，将公网地址填入 QQ 开放平台。MCP 公网路径应按各服务认证配置单独开放。
 
+## Nginx 80 端口配置
+
+提供 [Nginx 配置示例](../backend/deploy/nginx/synquay.conf.example)，域名为 `synquary.p.kalandraeye.com`，代理到安装包默认的 `127.0.0.1:8080`。管理台、API 和 MCP 共用该入口；关闭代理缓冲以支持 MCP 流式响应。配置仅监听 80，不包含证书和 HTTPS 跳转，后续由 Certbot 生成。
+
+在 Debian/Ubuntu 的 Nginx 上，从仓库目录执行：
+
+```bash
+sudo install -m 644 backend/deploy/nginx/synquay.conf.example /etc/nginx/sites-available/synquay
+sudo ln -s /etc/nginx/sites-available/synquay /etc/nginx/sites-enabled/synquay
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+启用前确认 DNS 指向服务器、80 端口可访问且 Synquay 已启动。已有同名配置或符号链接时先检查，不重复覆盖。配置使用的 [反向代理指令](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) 保留原始 URI、Host 与请求的认证头。
+
+此示例会代理整个管理台，当前管理台没有登录认证；对公网使用时需另外限制管理台和管理 API 的访问。HTTPS 本身不提供管理权限控制。前端 API 请求使用 `credentials: 'omit'`，因此不能直接依赖浏览器自动附带的 Nginx Basic Auth 凭据。
+
 ## 升级、备份与卸载
 
 ```bash

@@ -388,10 +388,21 @@ test('connection API preserves structured field errors without rejected input va
 });
 
 
-test('generated local endpoints use numeric loopback and retain deployment domains',async()=>{
+test('generated endpoints follow the browser site protocol, host and port',async()=>{
  const {generatedOrigin}=await import('../src/shared/urls.ts');
- assert.equal(generatedOrigin('http://localhost:5174'),'http://127.0.0.1:5174');
- assert.equal(generatedOrigin('https://localhost:8443'),'https://127.0.0.1:8443');
+ assert.equal(generatedOrigin('http://localhost:5174'),'http://localhost:5174');
+ assert.equal(generatedOrigin('https://localhost:8443'),'https://localhost:8443');
  assert.equal(generatedOrigin('http://127.0.0.1:5174'),'http://127.0.0.1:5174');
  assert.equal(generatedOrigin('https://console.example.com'),'https://console.example.com');
+ const {address,defaults}=await import('../src/features/message-connections/api.ts');
+ const prior=Object.getOwnPropertyDescriptor(globalThis,'window');
+ try {
+  for(const origin of ['https://synquary.p.kalandraeye.com','http://192.168.1.10:8080','https://console.example.com:8443','http://[::1]:8080']) {
+   Object.defineProperty(globalThis,'window',{configurable:true,value:{location:{origin}}});
+   const connection={id:'test-id',name:'Test',description:'',enabled:false};
+   assert.equal(address({...connection,config:defaults('qq_bot')}),`${origin}/api/qq/test-id/webhook`);
+   assert.equal(address({...connection,config:defaults('webhook')}),`${origin}/api/webhooks/test-id`);
+   assert.equal(new URL('/mcp/test-id',generatedOrigin()).href,`${origin}/mcp/test-id`);
+  }
+ } finally {if(prior)Object.defineProperty(globalThis,'window',prior);else Reflect.deleteProperty(globalThis,'window');}
 });

@@ -1,6 +1,4 @@
-/** Use the numeric loopback for generated local endpoints; retain deployment origins. */
+/** Generate endpoints from the site opened in the browser, including its protocol and port. */
 export function generatedOrigin(origin: string = window.location.origin): string {
-  const url = new URL(origin);
-  if (url.hostname === 'localhost') url.hostname = '127.0.0.1';
-  return url.origin;
+  return new URL(origin).origin;
 }

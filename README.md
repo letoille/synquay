@@ -1,91 +1,143 @@
-# Synquay · 汇流港
+<p align="center">
+  <img src="frontend/public/brand/flow-icon.svg" width="88" height="88" alt="Synquay" />
+</p>
+<h1 align="center">Synquay</h1>
+<p align="center">Connect applications, messages, and AI agents.</p>
+<p align="center">
+  <a href="https://github.com/letoille/synquay/actions/workflows/deb.yml"><img src="https://github.com/letoille/synquay/actions/workflows/deb.yml/badge.svg" alt="Debian package" /></a>
+</p>
 
-连接应用、事件与 AI Agent。后端和前端统一放在本仓库，当前包含项目骨架和可运行的持久化 HTTP 消息转发链。
+**English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-已增加带认证的 MCP HTTP 工具闭环，配置和本地示例见 [MCP 工具发布与调用](docs/architecture/mcp-tools.md)。
+Synquay is a self-hosted gateway built with **Rust and React**. Connect applications through Webhook, HTTP, MQTT, and QQ Bot; route messages between them; and expose selected capabilities to AI agents through MCP.
 
-P0 调度、恢复接口与负载基线见[运行说明](docs/architecture/p0-operations.md)。
+[Documentation](#documentation) · [Releases](https://github.com/letoille/synquay/releases) · [Issues](https://github.com/letoille/synquay/issues)
 
-## 目录
+> **Early development.** APIs and configuration may change. The management console does not yet have login authentication; keep it on a private network or protect it with an authenticated reverse proxy.
 
-```text
-synquay/
-├── Cargo.toml          # Rust workspace
-├── backend/            # synquay-server：领域、应用服务、接口、基础设施
-├── frontend/           # @synquay/web：应用入口、功能模块、公共代码
-├── docs/               # 架构入口与开发约定
-└── package.json        # npm workspace 与开发脚本
+## What you can build
+
+- Forward an application's Webhook events to an HTTP endpoint or MQTT topic.
+- Receive QQ group or direct messages, match commands, and reply or invoke a configured capability.
+- Give an MCP client access to selected HTTP tools, resources, and prompts.
+- Use the separate Agent inbox mode to persist incoming messages, let an Agent worker claim and process jobs through MCP, and deliver results to a configured HTTP callback.
+
+Synquay handles integration and delivery. Model inference runs in your Agent. Receiving a Webhook does **not** automatically wake ChatGPT or another MCP client.
+
+## Features
+
+| Area | Available today |
+| --- | --- |
+| Connections | Authenticated Webhooks; HTTP/HTTPS clients; MQTT 3.1.1 subscriptions and publishing over TCP/TLS; official QQ Bot text messaging |
+| Routing | Source filters, multiple destinations, command mapping, direct replies, capability calls, and HTTP Agent destinations |
+| MCP | Multiple services with separate URLs and exposure scopes; Streamable HTTP; tools, resources, resource templates, prompts, and completion |
+| MCP authentication | Basic Auth, JWT verification, external OAuth token introspection, and unauthenticated mode; deployment-level Bearer configuration remains available |
+| Delivery | SQLite persistence, event deduplication, transactional Outbox, bounded queues, backpressure, and recovery for uncertain outcomes |
+| Console | Light/dark themes; English, Chinese, Japanese, and Spanish; route lists and relationship graphs |
+| Operations | Structured logs, request IDs, audit records, backup tooling, Debian packages, and systemd integration |
+
+Delivery receipts describe what the adapter can confirm; they do not guarantee that a device acted on a message or that a third party processed it exactly once.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    Sources["Webhook · MQTT · QQ Bot"] --> Routes["Filters · commands · routing"]
+    Routes --> Outbox["Persistent delivery queue"]
+    Outbox --> Destinations["HTTP · MQTT · QQ Bot"]
+    Agent["AI agent / MCP client"] <--> MCP["Synquay MCP services"]
+    MCP --> Tools["Configured HTTP tools"]
+    MCP --> Content["Resources · prompts"]
 ```
 
-## 本地运行
+Connections define protocol settings and credentials. Routes define which messages go where and how to process them. MCP services define what an Agent can discover and call. A bidirectional connection can be used on either side of a route.
 
-需要 Rust stable（支持 edition 2024，建议 1.98.1 或更新版本）及 Node.js 20.19+ 或 22.12+。在项目根目录运行：
+## Get started
 
-```sh
+### Debian / Ubuntu
+
+Download an **amd64** package and `SHA256SUMS` from [Releases](https://github.com/letoille/synquay/releases), or the artifact of a successful [Debian package workflow](https://github.com/letoille/synquay/actions/workflows/deb.yml). If no package has been published yet, run the workflow manually or build from source.
+
+```bash
+sha256sum --check SHA256SUMS
+sudo apt install ./synquay_*.deb
+systemctl status synquay
+```
+
+Open **http://127.0.0.1:8080/** on the installed machine. For a remote server:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@server
+```
+
+The package includes the backend, console, and systemd service. It runs as a dedicated user, creates installation-specific credentials, and preserves configuration and data during upgrades. See [packaging and deployment](docs/debian.md) for build commands, other architectures, and backup instructions.
+
+### Configure your first flow
+
+1. **Connections:** add a Webhook, MQTT, HTTP, or QQ Bot connection.
+2. **Routes:** choose a receiving connection, processing mode, and destination. Enable the connection and route when ready.
+3. **MCP services:** create or edit a service and select the capabilities to expose. Add its address and authentication settings to your MCP client.
+
+Message forwarding can run independently of MCP. The Agent inbox is a separate deployment mode; asynchronous Agent results are not yet automatically linked back to arbitrary QQ conversations.
+
+### Develop locally
+
+Use current Rust stable, **Node.js 22.18+** on the 22.x line, and Python 3.
+
+```bash
+git clone https://github.com/letoille/synquay.git
+cd synquay
 npm ci
 ```
 
-终端一启动后端：
+Follow the [local development guide](docs/local-development.md) to initialize a private development database and start the backend and frontend. Running the bare server without configuration only starts the base HTTP service.
 
-```sh
-cargo run -p synquay-server
-```
-
-终端二启动前端：
-
-```sh
-npm run dev:frontend
-```
-
-打开 http://127.0.0.1:5173。管理台暂不需要登录，自动读取配置；MCP 调用仍需授权。前端通过 Vite 的 `/api` 代理访问 http://127.0.0.1:8080，无需开发用的宽松 CORS 设置。
-
-后端 `GET /api/health` 返回 `{"status":"ok"}`；`GET /api/info` 返回服务名、版本和 `scaffold` 阶段。健康检查仅代表当前进程可响应，不代表未来连接器或数据库可用。
-
-默认只监听本机。通过进程环境变量修改地址：
-
-```sh
-SYNQUAY_BIND=127.0.0.1:8081 cargo run -p synquay-server
-SYNQUAY_API_TARGET=http://127.0.0.1:8081 npm run dev:frontend
-```
-
-`RUST_LOG=debug` 可调整日志级别，`SYNQUAY_LOG_FORMAT=json` 输出 JSON 日志。日志写到 stderr；每个请求都有服务端生成的 `x-request-id`，用于关联响应与日志。当前没有 `.env` 自动加载机制，`.env.example` 仅作为配置参考。
-
-```sh
-SYNQUAY_LOG_FORMAT=json RUST_LOG=info,synquay_server=debug cargo run -p synquay-server
-```
-
-配置错误会在监听端口前终止启动。请求日志包含路由模板、方法、状态码和响应头就绪耗时，不记录请求体、查询参数、Cookie 或 Authorization。当前 tracing 是进程内 span 与结构化日志，尚未接入 OpenTelemetry 或跨服务 trace context。
-
-## 验证与构建
-
-```sh
+```bash
 npm run check
+npm run test:frontend
 npm run build:frontend
-cargo build --release -p synquay-server
+cargo build --release --locked -p synquay-server
 ```
 
-前端产物位于 `frontend/dist/`，后端位于 `target/release/synquay-server`。设置 `SYNQUAY_WEB_DIR` 为前端产物目录后，后端在同一端口提供管理台与 API。Debian/Ubuntu 安装包包含前后端、独立服务用户和 systemd 服务，构建、安装与 GitHub Actions 用法见 [deb 打包与部署](docs/debian.md)。管理台当前没有登录鉴权，默认仅监听回环地址；QQ 公网回调可以通过反向代理单独开放。
+## Documentation
 
-提交 `Cargo.lock` 和 `package-lock.json`；缓存、构建产物、依赖目录和凭据不提交。
+Most detailed design and protocol documents are currently in Chinese.
 
-## 实现范围
+| Guide | Contents |
+| --- | --- |
+| [Local development](docs/local-development.md) | Fresh checkout, configuration, and startup |
+| [Debian deployment](docs/debian.md) | Packaging, GitHub Actions, systemd, upgrades, and backups |
+| [Message connections](docs/message-connections.md) | MQTT, Webhook, and HTTP settings |
+| [QQ Bot](docs/qq-bot.md) | Callbacks, credentials, and messaging constraints |
+| [Connection routing](docs/connection-routing.md) | Topics, conversations, commands, and replies |
+| [MCP content](docs/webhook-mcp.md) | Tools, resources, prompts, and protocol boundaries |
+| [Agent inbox](docs/agent-inbox.md) | Claiming jobs and submitting results through MCP |
+| [Architecture](docs/architecture/README.md) | Module contracts and extension points |
 
-已实现：分层代码框架、类型化配置及校验、文本/JSON tracing 日志、请求 ID 与耗时记录、404/405 统一错误响应、健康与版本接口、优雅退出、前端 API 客户端和连接状态、配置与 API 测试。
+## Project layout
 
-已建立连接器抽象：InboundDecoder、EventIngress、EventStore、EventSource、ToolExecutor、MessageSink、ConnectorLifecycle，以及统一上下文、事件/消息/工具类型、能力注册表和连接绑定的事件接收用例。详见 [连接器契约](docs/connectors.md)。
+```text
+backend/             Rust domain, application services, adapters, and HTTP API
+frontend/            React management console
+examples/            Protocol and integration examples
+scripts/             Development, backup, verification, and packaging tools
+docs/                Architecture and operating guides
+.github/workflows/   Debian build and release workflow
+```
 
-已补齐模块契约与应用编排：身份验证、权限决策、版本化工具发布、Schema 校验、审计、事件路由、Outbox 投递与原路回复，统一通过 BackendModules 注入依赖。详见 [模块抽象与对接](docs/module-integration.md)。
+## Roadmap
 
-已接通真实消息转发：可选配置的认证 webhook → SQLite EventStore → 路由 → Outbox → HTTP 目标，并持久化审计。启动后每秒扫描待办，支持去重与租约恢复。使用方式、示例配置及状态说明见 [持久化 HTTP 转发](docs/http-relay.md)。
+- Management-console login and a complete authorization experience.
+- Upstream MCP server bridging and executable CLI adapters.
+- Scheduled automation and broader connector support.
+- Trusted asynchronous Agent replies to originating conversations.
 
-已增加 MCP 工具入口、外部 OAuth 令牌校验及在线暴露发布，见[配置与运行说明](docs/architecture/oauth-publication.md)。Keycloak 本地联调已通过，复现方式见[联调说明](examples/keycloak/README.md)。尚待实现：公网客户端验证、动态权限管理、多渠道驱动与上游 MCP 桥接。P0 已支持受保护的人工核查和重放。P1 已补流式内容、数据库调度/索引、维护备份与来源检查点，见[实现说明](docs/architecture/p1-storage.md)。当前 HTTP 目标使用 Synquay 的消息 DTO，需要对应接收服务；管理台支持多 MCP 服务的创建、编辑、启停、删除及独立工具范围，默认服务保留原能力发布和分页历史接口，见[管理台运行与验收](docs/management-console.md)。
+These are planned capabilities, not features enabled by the current package.
 
-项目名称为 **Synquay**，中文名为 **汇流港**，代码标识统一为 `synquay`。目标域名为 `synquay.com`，尚未注册。开源许可证尚待选择。
+## Contributing
 
-逐模块设计见 [核心架构与模块契约](docs/architecture/README.md)，架构来源见 [docs/architecture.md](docs/architecture.md)，代码分层和扩展约定见 [docs/development.md](docs/development.md)。
+Use [Issues](https://github.com/letoille/synquay/issues) for bugs and proposals. Discuss larger changes before opening a pull request. Follow the [development conventions](docs/development.md), run the checks above, and include the behavior change and validation results in your PR. Improvements to translations and documentation are welcome; keep all README versions aligned. Never include credentials, private messages, or runtime databases in reports or commits.
 
-统一能力、资源与协议绑定说明见 [能力层](docs/architecture/capability-layer.md)。HTTP 工具可使用 `examples/tools-documented.json` 提供 Agent 使用指南。
+## License
 
-空间、成员与 MCP 授权管理见 [空间模型与 API](docs/architecture/workspaces.md)。
-
-QQ 指令可调用连接能力并按需回复原会话，配置与执行边界见 [连接路由与指令能力](docs/connection-routing.md#指令调用连接能力)。
+A license has not yet been selected. The repository does not currently grant an open-source license; do not assume MIT or Apache-2.0 terms apply.
