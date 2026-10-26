@@ -1,0 +1,14 @@
+# Packaging environment only; the installed service does not require Docker/Node.
+FROM node:22-bookworm AS node
+FROM rust:bookworm AS build
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends dpkg-dev python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN bash scripts/build-deb.sh && python3 -m unittest discover -s scripts/tests -v
+FROM scratch AS package
+COPY --from=build /src/target/debian/ /

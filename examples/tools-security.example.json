@@ -1,0 +1,25 @@
+{
+  "admin": {
+    "principal_id": "00000000-0000-0000-0000-000000000010"
+  },
+  "oauth": {
+    "issuer": "https://auth.example.com/issuer",
+    "resource": "https://synquay.example.com/mcp",
+    "introspection_endpoint": "https://auth.example.com/introspect",
+    "introspection_client_id": "synquay-resource-server",
+    "introspection_secret_env": "SYNQUAY_INTROSPECTION_SECRET",
+    "required_scope": "synquay:tools",
+    "allow_loopback_http": false,
+    "grants": [
+      {
+        "subject": "replace-with-provider-subject",
+        "oauth_client_id": "replace-with-agent-client-id",
+        "principal_id": "00000000-0000-0000-0000-000000000011",
+        "client_id": "00000000-0000-0000-0000-000000000012",
+        "tools": [
+          "echo"
+        ]
+      }
+    ]
+  }
+}

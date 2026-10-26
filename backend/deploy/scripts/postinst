@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+if [ "$1" = configure ]; then
+    if ! getent group synquay >/dev/null; then
+        addgroup --system synquay
+    fi
+    if ! getent passwd synquay >/dev/null; then
+        adduser --system --ingroup synquay --no-create-home --home /var/lib/synquay synquay
+    fi
+    install -d -o root -g synquay -m 0750 /etc/synquay
+    install -d -o synquay -g synquay -m 0750 /var/lib/synquay
+    python3 /usr/share/synquay/initialize.py
+    for file in tools.json security.json pipeline.json; do
+        chown root:synquay "/etc/synquay/$file"
+        chmod 0640 "/etc/synquay/$file"
+    done
+    chown root:root /etc/synquay/credentials.env
+    chmod 0600 /etc/synquay/credentials.env
+fi
+#DEBHELPER#
+exit 0

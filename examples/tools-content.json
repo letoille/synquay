@@ -1,0 +1,98 @@
+{
+  "database": "./synquay-content-demo.db",
+  "workspace_id": "00000000-0000-0000-0000-000000000001",
+  "profile_id": "00000000-0000-0000-0000-000000000002",
+  "principal_id": "00000000-0000-0000-0000-000000000003",
+  "token_env": "SYNQUAY_MCP_TOKEN",
+  "revision": 1,
+  "tools": [
+    {
+      "public_name": "echo",
+      "connection_id": "00000000-0000-0000-0000-000000000004",
+      "definition": {
+        "id": "echo-operation",
+        "description": "Return the supplied integer from the configured demo HTTP service",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "effect": "ReadOnly"
+      },
+      "url": "http://127.0.0.1:8091/echo",
+      "bearer_env": null,
+      "exposed": true,
+      "allow_loopback_http": true
+    }
+  ],
+  "mcp_content": {
+    "revision": 1,
+    "resources": [
+      {
+        "id": "usage-guide",
+        "description": "Synquay 示例能力使用说明",
+        "mime_type": "text/markdown",
+        "text": "# 示例工具\n先阅读工具参数与权限，再调用 echo。该示例不会控制任何真实设备。",
+        "exposed": true
+      }
+    ],
+    "templates": [
+      {
+        "id": "device-guide",
+        "description": "运维者审核的设备说明；示例尚未绑定执行器",
+        "mime_type": "application/json",
+        "parameter": "device",
+        "entries": {
+          "heater": "{\"device\": \"heater\", \"state\": \"demo_only\", \"execution_enabled\": false}"
+        },
+        "exposed": true
+      }
+    ],
+    "prompts": [
+      {
+        "id": "plan-action",
+        "description": "根据说明生成待检查的计划，不执行操作",
+        "exposed": true,
+        "arguments": [
+          {
+            "name": "device",
+            "description": "示例设备名",
+            "required": true,
+            "choices": [
+              "heater"
+            ]
+          },
+          {
+            "name": "request",
+            "description": "用户希望完成的任务",
+            "required": true
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "text": "设备：{{device}}。用户请求：{{request}}。请先检查已公开能力和权限，只输出计划；未提供执行器时明确说明无法执行。"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,195 @@
+{
+  "scenario": "slow",
+  "messages": 200,
+  "workers": 8,
+  "payload_bytes": 60000,
+  "capacity": 50,
+  "platform": "macOS-26.3-arm64-arm-64bit-Mach-O",
+  "binary": "/Users/zp/program/future/synquay/target/release/synquay-server",
+  "binary_sha256": "46fa0faff2f7b9ec177bbaf9549f60d3faadac1335db7ebea618cea7c4d2aa09",
+  "ingress_seconds": 0.0847722499165684,
+  "total_seconds_including_drain": 2.948215499985963,
+  "request_statuses": {
+    "202": 50,
+    "503": 150
+  },
+  "rejection_codes": {
+    "capacity_exceeded": 150
+  },
+  "ingress_requests_per_second": 2359.262614792424,
+  "accepted_per_second": 589.815653698106,
+  "target_calls": {
+    "fast": 50,
+    "slow": 50
+  },
+  "ingress_latency": {
+    "p50_ms": 2.42637493647635,
+    "p95_ms": 6.958167068660259,
+    "p99_ms": 14.09054221585393
+  },
+  "accepted_delivery_latency": {
+    "p50_ms": 135.62016701325774,
+    "p95_ms": 2601.718374993652,
+    "p99_ms": 2829.2097500525415
+  },
+  "rss_peak_bytes": null,
+  "rss_samples": 0,
+  "rss_sampling_errors": [
+    "PermissionError"
+  ],
+  "sampled_backlog_peak": 47,
+  "final": {
+    "database": {
+      "case_limit_per_kind": 100,
+      "database_bytes": 9732096,
+      "disk_free_bytes": 140813160448,
+      "oldest_pending_ms": null,
+      "paused": true,
+      "pending_bytes": 0,
+      "pending_items": 0,
+      "recovery_cases": [],
+      "schema_version": 3,
+      "states": {
+        "deliveries": {
+          "submitted": 100
+        },
+        "routing_tasks": {
+          "completed": 50
+        }
+      },
+      "wal_bytes": 4260112
+    },
+    "runtime": {
+      "capacity_rejected": 150,
+      "db_rejected": 0,
+      "delivery_latency": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          0,
+          12,
+          35,
+          3,
+          0,
+          50,
+          0,
+          0
+        ],
+        "sum": 2936467,
+        "unit": "microseconds"
+      },
+      "duplicates": 0,
+      "failed": 0,
+      "ingest_latency": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          3,
+          128,
+          69,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 209103,
+        "unit": "microseconds"
+      },
+      "ingress_rejected": 0,
+      "reconcile": 0,
+      "retried": 0,
+      "scope": "process_since_start",
+      "sql_execution": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          457,
+          483,
+          12,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 190821,
+        "unit": "microseconds"
+      },
+      "sql_wait": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          646,
+          217,
+          89,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 261272,
+        "unit": "microseconds"
+      },
+      "stored": 50,
+      "submitted": 100,
+      "worker_errors": 0
+    },
+    "scheduler": {
+      "cooldown_ms": 30000,
+      "failure_threshold": 3,
+      "max_in_flight": 8,
+      "min_interval_ms": 0,
+      "strict_order": false
+    },
+    "targets": [
+      {
+        "circuit_open_remaining_ms": null,
+        "consecutive_failures": 0,
+        "processed": 50,
+        "target_id": "00000000-0000-0000-0000-000000000004"
+      },
+      {
+        "circuit_open_remaining_ms": null,
+        "consecutive_failures": 0,
+        "processed": 50,
+        "target_id": "00000000-0000-0000-0000-000000000040"
+      }
+    ]
+  },
+  "server_errors": [],
+  "limitations": "Finite local scenario; not a sustained-memory or production-throughput guarantee. No retries of rejected inputs. Delivery percentiles include successful targets only; pending work and errors are reported separately."
+}

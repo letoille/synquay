@@ -1,0 +1,14 @@
+{
+  "keycloak": {
+    "version": "26.8.1",
+    "url": "https://github.com/keycloak/keycloak/releases/download/26.8.1/keycloak-26.8.1.tar.gz",
+    "sha256": "4e2740b181faa2ea623a1c2ecf00855935311e546046e2f857615a47ed24cbe8",
+    "directory": "keycloak-26.8.1"
+  },
+  "java_macos_arm64": {
+    "version": "21.0.13+9",
+    "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.13_9.tar.gz",
+    "sha256": "bf036b35b071bfb2f54f2c0af8ee8d88afa95ee6eb3dce02c0f94cfc2524d04a",
+    "directory": "jdk-21.0.13+9/Contents/Home"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "synquay",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "dev:backend": "cargo run -p synquay-server",
+    "dev:frontend": "npm run dev --workspace @synquay/web --",
+    "build:frontend": "npm run build --workspace @synquay/web",
+    "check:frontend": "npm run typecheck --workspace @synquay/web",
+    "check:backend": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "check": "npm run check:frontend && npm run check:backend",
+    "test:frontend": "node --experimental-transform-types --test frontend/tests/control.test.ts"
+  }
+}

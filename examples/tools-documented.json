@@ -1,0 +1,69 @@
+{
+  "database": "./synquay-documented-tools.db",
+  "workspace_id": "00000000-0000-0000-0000-000000000001",
+  "profile_id": "00000000-0000-0000-0000-000000000002",
+  "principal_id": "00000000-0000-0000-0000-000000000003",
+  "token_env": "SYNQUAY_MCP_TOKEN",
+  "revision": 1,
+  "tools": [
+    {
+      "public_name": "echo",
+      "connection_id": "00000000-0000-0000-0000-000000000004",
+      "definition": {
+        "id": "echo-operation",
+        "description": "Return the supplied integer from the configured demo HTTP service",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "effect": "ReadOnly",
+        "documentation": {
+          "when_to_use": [
+            "验证已配置的 echo HTTP 服务能否返回指定整数。"
+          ],
+          "preconditions": [
+            "value 必须是整数；上游 echo 服务需已启动。"
+          ],
+          "examples": [
+            {
+              "description": "回传整数 7",
+              "arguments": {
+                "value": 7
+              }
+            }
+          ],
+          "errors": [
+            {
+              "code": "outcome_unknown",
+              "description": "请求可能已发送，但结果无法确认。",
+              "recovery": "先核查原调用结果，不要因为超时自动重复执行。"
+            }
+          ]
+        }
+      },
+      "url": "http://127.0.0.1:8091/echo",
+      "bearer_env": null,
+      "exposed": true,
+      "allow_loopback_http": true
+    }
+  ]
+}

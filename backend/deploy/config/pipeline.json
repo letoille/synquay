@@ -1,0 +1,32 @@
+{
+  "database": "/var/lib/synquay/synquay.db",
+  "workspace_id": "00000000-0000-0000-0000-000000000001",
+  "source_connection_id": "00000000-0000-0000-0000-000000000002",
+  "target_connection_id": "00000000-0000-0000-0000-000000000003",
+  "destination_id": "00000000-0000-0000-0000-000000000004",
+  "principal_id": "00000000-0000-0000-0000-000000000005",
+  "rule_id": "00000000-0000-0000-0000-000000000006",
+  "webhook_token_env": "SYNQUAY_WEBHOOK_TOKEN",
+  "destination_url": "http://127.0.0.1:9/unconfigured",
+  "destination_token_env": null,
+  "allow_loopback_http": true,
+  "capacity": {
+    "max_pending_items": 10000,
+    "max_pending_bytes": 268435456,
+    "resume_percent": 80,
+    "min_free_disk_bytes": 268435456,
+    "resume_free_disk_bytes": 536870912
+  },
+  "scheduler": {
+    "max_in_flight": 8,
+    "min_interval_ms": 100,
+    "failure_threshold": 3,
+    "cooldown_ms": 30000,
+    "strict_order": false
+  },
+  "additional_targets": [],
+  "admin_token_env": null,
+  "operator_principal_id": null,
+  "bootstrap_routes": false,
+  "source_name": "Webhook"
+}

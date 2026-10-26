@@ -1,0 +1,149 @@
+{
+  "resources": [
+    {
+      "reference": {
+        "scope": {
+          "workspace_id": "00000000-0000-0000-0000-000000000001",
+          "connection_id": "00000000-0000-0000-0000-000000000002"
+        },
+        "id": "home.heater",
+        "revision": 1
+      },
+      "resource_type": "water_heater",
+      "display_name": "家中热水器",
+      "description": "家庭 MQTT 网关接入的热水器"
+    }
+  ],
+  "capabilities": [
+    {
+      "descriptor": {
+        "reference": {
+          "scope": {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "connection_id": "00000000-0000-0000-0000-000000000002"
+          },
+          "id": "heater.set_power",
+          "revision": 1
+        },
+        "origin": "operator",
+        "resource": {
+          "scope": {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "connection_id": "00000000-0000-0000-0000-000000000002"
+          },
+          "id": "home.heater",
+          "revision": 1
+        },
+        "spec": {
+          "kind": "action",
+          "tool": {
+            "id": "heater.set_power",
+            "description": "设置家中热水器的电源状态。",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "power": {
+                  "type": "boolean",
+                  "description": "true 为开启，false 为关闭"
+                }
+              },
+              "required": [
+                "power"
+              ],
+              "additionalProperties": false
+            },
+            "output_schema": null,
+            "effect": "SideEffecting",
+            "documentation": {
+              "when_to_use": [
+                "用户明确要求开启或关闭这台热水器。"
+              ],
+              "preconditions": [
+                "必须具备该资源的操作权限。"
+              ],
+              "examples": [
+                {
+                  "description": "开启",
+                  "arguments": {
+                    "power": true
+                  }
+                }
+              ]
+            }
+          },
+          "execution": {
+            "mode": "deferred",
+            "completion": "target_confirmed",
+            "idempotency": "idempotent",
+            "timeout_ms": 30000
+          }
+        }
+      },
+      "binding_revision": 1,
+      "binding": {
+        "protocol": "mqtt_publish",
+        "topic": "home/heater/set",
+        "qos": "at_least_once",
+        "retain": false,
+        "payload": {
+          "power": {
+            "source": "argument",
+            "pointer": "/power"
+          },
+          "command_id": {
+            "source": "invocation_id"
+          }
+        },
+        "acknowledgement": {
+          "topic": "home/heater/ack",
+          "correlation_pointer": "/command_id",
+          "result_pointer": "/status",
+          "success_value": "applied"
+        }
+      }
+    },
+    {
+      "descriptor": {
+        "reference": {
+          "scope": {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "connection_id": "00000000-0000-0000-0000-000000000002"
+          },
+          "id": "heater.state",
+          "revision": 1
+        },
+        "origin": "operator",
+        "resource": {
+          "scope": {
+            "workspace_id": "00000000-0000-0000-0000-000000000001",
+            "connection_id": "00000000-0000-0000-0000-000000000002"
+          },
+          "id": "home.heater",
+          "revision": 1
+        },
+        "spec": {
+          "kind": "state",
+          "description": "读取热水器最近状态，需核对来源时间和新鲜度。",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "power": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "power"
+            ]
+          },
+          "max_age_ms": 60000
+        }
+      },
+      "binding_revision": 1,
+      "binding": {
+        "protocol": "mqtt_subscribe",
+        "topic_filter": "home/heater/state",
+        "qos": "at_least_once"
+      }
+    }
+  ]
+}

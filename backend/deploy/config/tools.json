@@ -1,0 +1,9 @@
+{
+  "database": "/var/lib/synquay/synquay.db",
+  "workspace_id": "00000000-0000-0000-0000-000000000001",
+  "profile_id": "00000000-0000-0000-0000-000000000002",
+  "principal_id": "00000000-0000-0000-0000-000000000003",
+  "token_env": "SYNQUAY_MCP_TOKEN",
+  "revision": 1,
+  "tools": []
+}

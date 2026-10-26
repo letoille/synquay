@@ -1,0 +1,15 @@
+.git
+node_modules
+**/node_modules
+target
+**/dist
+backend/web-dist
+data
+.cache
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite*
+*.log
+**/__pycache__

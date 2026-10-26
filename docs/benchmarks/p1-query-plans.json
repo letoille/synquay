@@ -1,0 +1,69 @@
+{
+  "sqlite_version": "3.50.4",
+  "engine": "Python sqlite3; bundled Rust engine separately covered by integration test",
+  "fixture_deliveries": 10000,
+  "fixture_events": 10000,
+  "fixture_audit": 10000,
+  "plans": {
+    "target_claim": {
+      "sql": "SELECT delivery_id FROM deliveries WHERE workspace='w' AND target_id='t1' AND state='pending' AND resolution IS NULL AND due_ms<=10000 ORDER BY due_ms,rowid LIMIT 1",
+      "plan": [
+        "SEARCH deliveries USING INDEX delivery_target_pending (workspace=? AND target_id=? AND due_ms<?)"
+      ]
+    },
+    "strict_predecessor": {
+      "sql": "SELECT 1 FROM deliveries WHERE workspace='w' AND target_id='t1' AND rowid<100 AND state<>'submitted' AND resolution IS NULL LIMIT 1",
+      "plan": [
+        "SEARCH deliveries USING INDEX delivery_unresolved_target (workspace=? AND target_id=? AND rowid<?)"
+      ]
+    },
+    "expired_lease": {
+      "sql": "SELECT delivery_id FROM deliveries WHERE workspace='w' AND state='sending' AND lease_until_ms<=100",
+      "plan": [
+        "SEARCH deliveries USING INDEX delivery_expired (workspace=? AND state=? AND lease_until_ms<?)"
+      ]
+    },
+    "route_ready": {
+      "sql": "SELECT source,event_id FROM routing_tasks WHERE workspace='w' AND state IN ('ready','retry_wait') AND due_ms<=10000 ORDER BY due_ms,event_id LIMIT 100",
+      "plan": [
+        "SEARCH routing_tasks USING INDEX routing_ready_order (workspace=? AND due_ms<?)"
+      ]
+    },
+    "audit_retention": {
+      "sql": "SELECT rowid FROM audit WHERE workspace='w' AND occurred_ms<=10000 ORDER BY occurred_ms LIMIT 100",
+      "plan": [
+        "SEARCH audit USING COVERING INDEX audit_retention (workspace=? AND occurred_ms<?)"
+      ]
+    },
+    "payload_retention": {
+      "sql": "SELECT rowid FROM retired_work WHERE workspace='w' AND payload_purged=0 AND retired_ms<=100 LIMIT 100",
+      "plan": [
+        "SEARCH retired_work USING COVERING INDEX retired_payload_due (workspace=? AND retired_ms<?)"
+      ]
+    },
+    "content_retry_delete": {
+      "sql": "SELECT id FROM content_objects WHERE state='deleting' ORDER BY created_ms LIMIT 100",
+      "plan": [
+        "SEARCH content_objects USING INDEX content_age (state=?)"
+      ]
+    },
+    "content_expired_staging": {
+      "sql": "SELECT id FROM content_objects WHERE state IN ('uploading','staged') AND created_ms<100 ORDER BY created_ms LIMIT 100",
+      "plan": [
+        "SEARCH content_objects USING INDEX content_staged_age (created_ms<?)"
+      ]
+    },
+    "content_reverse_reference": {
+      "sql": "SELECT event_id FROM event_content WHERE content_id='c1'",
+      "plan": [
+        "SEARCH event_content USING INDEX event_content_reverse (content_id=?)"
+      ]
+    },
+    "checkpoint": {
+      "sql": "SELECT revision,cursor FROM source_checkpoints WHERE workspace='w' AND source='s' AND partition='p'",
+      "plan": [
+        "SEARCH source_checkpoints USING INDEX sqlite_autoindex_source_checkpoints_1 (workspace=? AND source=? AND partition=?)"
+      ]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+import { Input,Checkbox } from '../../shared/ui/Controls';
+import { t } from '../../shared/i18n';
+import type { Config,BodyMode,HttpAuth } from './api';
+import {Field,FormIssue} from './FormField';
+export {Field} from './FormField';
+function Body({value,onChange}:{value:BodyMode;onChange:(v:BodyMode)=>void}){return <Field label="发送内容"><select className="ui-input" value={value} onChange={e=>onChange(e.target.value as BodyMode)}><option value="payload">{t('原始内容')}</option><option value="event">{t('完整事件')}</option></select></Field>;}
+const nullable=(s:string)=>s||null;
+export function ConnectionFields({config:c,change,secretValue='',onSecretChange,secretConfigured=false}:{config:Config;change:(c:Config)=>void;secretValue?:string;onSecretChange?:(value:string)=>void;secretConfigured?:boolean}) {
+ if(c.kind==='qq_bot')return <>
+   <Field name="config.app_id" label="AppID"><Input required inputMode="numeric" pattern="[0-9]+" maxLength={32} value={c.app_id} onChange={e=>change({...c,app_id:e.target.value})}/></Field>
+   <Field name="secret" label="密钥"><Input type="password" autoComplete="new-password" required={!secretConfigured} maxLength={4096} value={secretValue} onChange={e=>onSecretChange?.(e.target.value)} placeholder={t(secretConfigured?'已配置，留空保持不变':'填写 AppSecret')}/></Field>
+   <Field name="config.group_openid" label="限定群（可选）"><Input maxLength={128} value={c.group_openid} onChange={e=>change({...c,group_openid:e.target.value})} placeholder={t('留空，在路由中选择会话')}/></Field>
+   <Field name="config.allowed_senders" label="允许的成员"><Input value={c.allowed_senders.join(',')} onChange={e=>change({...c,allowed_senders:e.target.value.split(',')})} placeholder={t('用户 OpenID，逗号分隔；留空允许所有人')}/></Field>
+   <Field label="接收方式"><span>Webhook · Ed25519</span></Field>
+   <Checkbox checked={c.allow_proactive} onCheckedChange={v=>change({...c,allow_proactive:v===true})}>{t('允许主动发送')}</Checkbox>
+ </>;
+ if(c.kind==='webhook')return <>
+   <Field label="认证方式"><select className="ui-input" value={c.policy.authentication} onChange={e=>change({...c,policy:{...c.policy,authentication:e.target.value as 'bearer'|'hmac_sha256'}})}><option value="bearer">Bearer</option><option value="hmac_sha256">HMAC SHA-256</option></select></Field>
+   <Field name="config.secret_env" label="密钥环境变量"><Input required maxLength={128} value={c.secret_env} onChange={e=>change({...c,secret_env:e.target.value})} placeholder="WEBHOOK_SECRET" /></Field>
+   <Field label="接收格式"><select className="ui-input" value={c.policy.format.kind} onChange={e=>change({...c,policy:{...c.policy,format:e.target.value==='json'?{kind:'json',event_type:'message.received',id_header:'x-event-id'}:{kind:'envelope'}}})}><option value="json">JSON</option><option value="envelope">Synquay Event</option></select></Field>
+   {c.policy.format.kind==='json'&&<><Field name="config.policy.format.event_type" label="事件类型"><Input required maxLength={128} value={c.policy.format.event_type} onChange={e=>{if(c.policy.format.kind==='json')change({...c,policy:{...c.policy,format:{...c.policy.format,event_type:e.target.value}}});}} /></Field><Field name="config.policy.format.id_header" label="事件编号请求头"><Input required maxLength={64} value={c.policy.format.id_header} onChange={e=>{if(c.policy.format.kind==='json')change({...c,policy:{...c.policy,format:{...c.policy.format,id_header:e.target.value}}});}} placeholder="x-event-id" /></Field></>}
+ </>;
+ if(c.kind==='http_client')return <>
+   <Field name="config.url" label="请求地址"><Input required type="url" maxLength={2048} value={c.url} onChange={e=>change({...c,url:e.target.value})} placeholder="https://api.example.com/messages" /></Field>
+   <Field name="config.method" label="请求方式"><select className="ui-input" value={c.method} onChange={e=>change({...c,method:e.target.value})}>{['POST','PUT','PATCH'].map(m=><option key={m}>{m}</option>)}</select></Field>
+   <Field label="认证方式"><select className="ui-input" value={c.auth.kind} onChange={e=>change({...c,auth:e.target.value==='bearer'?{kind:'bearer',token_env:''}:e.target.value==='basic'?{kind:'basic',username:'',password_env:''}:{kind:'none'}})}><option value="none">{t('无鉴权')}</option><option value="bearer">Bearer</option><option value="basic">Basic</option></select></Field>
+   {c.auth.kind==='basic'&&<Field name="config.auth.username" label="用户名"><Input required maxLength={256} value={c.auth.username} onChange={e=>change({...c,auth:{...c.auth,username:e.target.value} as HttpAuth})} /></Field>}
+   {c.auth.kind!=='none'&&<Field name={c.auth.kind==='bearer'?'config.auth.token_env':'config.auth.password_env'} label="密钥环境变量"><Input required maxLength={128} value={c.auth.kind==='bearer'?c.auth.token_env:c.auth.password_env} onChange={e=>change({...c,auth:c.auth.kind==='bearer'?{...c.auth,token_env:e.target.value}:{...c.auth,password_env:e.target.value} as HttpAuth})} placeholder="HTTP_SECRET" /></Field>}
+   <Body value={c.body} onChange={body=>change({...c,body})}/>
+   <Checkbox checked={c.allow_http} onCheckedChange={v=>change({...c,allow_http:v===true})}>{t('允许普通 HTTP')}</Checkbox>
+ </>;
+ return <>
+   <Field name="config.host" label="Broker"><Input required maxLength={253} value={c.host} onChange={e=>change({...c,host:e.target.value})} placeholder="mqtt.example.com" /></Field>
+   <Field name="config.port" label="端口"><Input required type="number" min={1} max={65535} value={c.port} onChange={e=>change({...c,port:Number(e.target.value)})} /></Field>
+   <Field name="config.username" label="用户名"><Input maxLength={256} value={c.username??''} onChange={e=>change({...c,username:nullable(e.target.value)})} /></Field>
+   <Field name="config.password_env" label="密码环境变量"><Input maxLength={128} value={c.password_env??''} onChange={e=>change({...c,password_env:nullable(e.target.value)})} placeholder="MQTT_PASSWORD" /></Field>
+   <div className="message-section-toggle"><Checkbox checked={!!c.tls} onCheckedChange={v=>change({...c,tls:v?{ca_env:null,client_cert_env:null,client_key_env:null}:null,port:v&&c.port===1883?8883:!v&&c.port===8883?1883:c.port})}>SSL / TLS</Checkbox></div>
+   {c.tls&&<><Field name="config.tls.ca_env" label="CA 环境变量"><Input maxLength={128} value={c.tls.ca_env??''} onChange={e=>change({...c,tls:{...c.tls!,ca_env:nullable(e.target.value)}})} placeholder={t('留空使用公共 CA')} /></Field><Field name="config.tls.client_cert_env" label="客户端证书环境变量"><Input maxLength={128} value={c.tls.client_cert_env??''} onChange={e=>change({...c,tls:{...c.tls!,client_cert_env:nullable(e.target.value)}})} /></Field><Field name="config.tls.client_key_env" label="客户端私钥环境变量"><Input maxLength={128} value={c.tls.client_key_env??''} onChange={e=>change({...c,tls:{...c.tls!,client_key_env:nullable(e.target.value)}})} /></Field></>}
+   <FormIssue name="config.subscription"/><div className="message-section-toggle"><Checkbox checked={!!c.subscription} onCheckedChange={v=>change({...c,subscription:v?{topic:'',qos:1,event_type:'mqtt.message',include_metadata:true}:null})}>{t('订阅接收')}</Checkbox></div>
+   {c.subscription&&<><Field name="config.subscription.topic" label="订阅 Topic"><Input required maxLength={512} value={c.subscription.topic} onChange={e=>change({...c,subscription:{...c.subscription!,topic:e.target.value}})} placeholder="home/+/state" /></Field><Field name="config.subscription.qos" label="QoS"><select className="ui-input" value={c.subscription.qos} onChange={e=>change({...c,subscription:{...c.subscription!,qos:Number(e.target.value)}})}><option value={0}>0</option><option value={1}>1</option></select></Field><Field name="config.subscription.event_type" label="事件类型"><Input required maxLength={128} value={c.subscription.event_type} onChange={e=>change({...c,subscription:{...c.subscription!,event_type:e.target.value}})} /></Field><Checkbox checked={c.subscription.include_metadata??false} onCheckedChange={v=>change({...c,subscription:{...c.subscription!,include_metadata:v===true}})}>{t('附带 Topic 信息')}</Checkbox></>}
+   <div className="message-section-toggle"><Checkbox checked={!!c.publish} onCheckedChange={v=>change({...c,publish:v?{topic:'',qos:1,retain:false,body:'payload'}:null})}>{t('发布发送')}</Checkbox></div>
+   {c.publish&&<><Field name="config.publish.topic" label="发布 Topic"><Input required maxLength={512} value={c.publish.topic} onChange={e=>change({...c,publish:{...c.publish!,topic:e.target.value}})} placeholder="home/heater/set" /></Field><Field name="config.publish.qos" label="QoS"><select className="ui-input" value={c.publish.qos} onChange={e=>change({...c,publish:{...c.publish!,qos:Number(e.target.value)}})}><option value={0}>0</option><option value={1}>1</option></select></Field><Body value={c.publish.body} onChange={body=>change({...c,publish:{...c.publish!,body}})} /><Checkbox checked={c.publish.retain} onCheckedChange={v=>change({...c,publish:{...c.publish!,retain:v===true}})}>Retain</Checkbox></>}
+ </>;
+}

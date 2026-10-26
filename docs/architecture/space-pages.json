@@ -1,0 +1,156 @@
+{
+  "architecture_version": "0.4",
+  "updated_at": "2026-10-24",
+  "pages": [
+    {
+      "path": "docs/architecture/README.md",
+      "page_id": "page_2d733ab38e988191abd8a7cc04ea91a2",
+      "url": "https://chatgpt.com/space/page_2d733ab38e988191abd8a7cc04ea91a2",
+      "title": "06 Synquay 核心架构与模块契约"
+    },
+    {
+      "path": "docs/architecture/modules/01-control-plane.md",
+      "page_id": "page_1a06ffd3db808191893636a0d48bea50",
+      "url": "https://chatgpt.com/space/page_1a06ffd3db808191893636a0d48bea50",
+      "title": "01 配置控制面"
+    },
+    {
+      "path": "docs/architecture/modules/02-capabilities.md",
+      "page_id": "page_13f955cbdf1c8191a8923e43b70829de",
+      "url": "https://chatgpt.com/space/page_13f955cbdf1c8191a8923e43b70829de",
+      "title": "02 能力目录与发布"
+    },
+    {
+      "path": "docs/architecture/modules/03-identity-policy.md",
+      "page_id": "page_3af1adcf1bbc819193f72096add28b82",
+      "url": "https://chatgpt.com/space/page_3af1adcf1bbc819193f72096add28b82",
+      "title": "03 身份权限与审批"
+    },
+    {
+      "path": "docs/architecture/modules/04-credentials.md",
+      "page_id": "page_5551784e4578819182d6c9164c71cb72",
+      "url": "https://chatgpt.com/space/page_5551784e4578819182d6c9164c71cb72",
+      "title": "04 凭据管理"
+    },
+    {
+      "path": "docs/architecture/modules/05-connector-runtime.md",
+      "page_id": "page_18e84a7276bc81918eeed0c25669712d",
+      "url": "https://chatgpt.com/space/page_18e84a7276bc81918eeed0c25669712d",
+      "title": "05 连接器运行管理"
+    },
+    {
+      "path": "docs/architecture/modules/06-events-sources.md",
+      "page_id": "page_614c97e900688191985440df1a118c3e",
+      "url": "https://chatgpt.com/space/page_614c97e900688191985440df1a118c3e",
+      "title": "06 事件与来源订阅"
+    },
+    {
+      "path": "docs/architecture/modules/07-routing.md",
+      "page_id": "page_635c7bcee91c8191a3237dfab2c3a76c",
+      "url": "https://chatgpt.com/space/page_635c7bcee91c8191a3237dfab2c3a76c",
+      "title": "07 路由与处理计划"
+    },
+    {
+      "path": "docs/architecture/modules/08-delivery.md",
+      "page_id": "page_537e5da000a4819181b532533a06193d",
+      "url": "https://chatgpt.com/space/page_537e5da000a4819181b532533a06193d",
+      "title": "08 投递与恢复"
+    },
+    {
+      "path": "docs/architecture/modules/09-invocations-runners.md",
+      "page_id": "page_4871fdcf1dd88191a22c724730a1f355",
+      "url": "https://chatgpt.com/space/page_4871fdcf1dd88191a22c724730a1f355",
+      "title": "09 工具调用与 Runner"
+    },
+    {
+      "path": "docs/architecture/modules/10-agent-jobs.md",
+      "page_id": "page_6e7b7eb32bd88191ad037b1cf6fd5b63",
+      "url": "https://chatgpt.com/space/page_6e7b7eb32bd88191ad037b1cf6fd5b63",
+      "title": "10 Agent 收件箱与任务"
+    },
+    {
+      "path": "docs/architecture/modules/11-conversations-content.md",
+      "page_id": "page_9abff9009290819185825083011db45b",
+      "url": "https://chatgpt.com/space/page_9abff9009290819185825083011db45b",
+      "title": "11 会话回复与附件"
+    },
+    {
+      "path": "docs/architecture/modules/12-mcp.md",
+      "page_id": "page_45ac33f76998819181af83a40cc2ac18",
+      "url": "https://chatgpt.com/space/page_45ac33f76998819181af83a40cc2ac18",
+      "title": "12 MCP 协议与桥接"
+    },
+    {
+      "path": "docs/architecture/modules/13-audit-observability.md",
+      "page_id": "page_9e66566a3f84819197ac56ed3457ebd7",
+      "url": "https://chatgpt.com/space/page_9e66566a3f84819197ac56ed3457ebd7",
+      "title": "13 审计与可观测性"
+    },
+    {
+      "path": "docs/architecture/modules/14-storage-operations.md",
+      "page_id": "page_498d517cefbc819197425f9063b3e0ff",
+      "url": "https://chatgpt.com/space/page_498d517cefbc819197425f9063b3e0ff",
+      "title": "14 存储与运行运维"
+    },
+    {
+      "path": "docs/architecture/modules/15-management-sdk.md",
+      "page_id": "page_19527757f6e88191b97c247af5deeb60",
+      "url": "https://chatgpt.com/space/page_19527757f6e88191b97c247af5deeb60",
+      "title": "15 管理接口与 SDK"
+    },
+    {
+      "path": "docs/architecture/contracts.md",
+      "page_id": "page_003378e0292c8191b3b65ef4b96c801d",
+      "url": "https://chatgpt.com/space/page_003378e0292c8191b3b65ef4b96c801d",
+      "title": "16 跨模块对接契约"
+    },
+    {
+      "path": "docs/architecture/roadmap.md",
+      "page_id": "page_64c4509850f88191bf7d94435d4814c5",
+      "url": "https://chatgpt.com/space/page_64c4509850f88191bf7d94435d4814c5",
+      "title": "17 实施路线与验收"
+    },
+    {
+      "path": "docs/architecture/performance.md",
+      "page_id": "page_cb5a7efafb508191b1d286dc65657111",
+      "url": "https://chatgpt.com/space/page_cb5a7efafb508191b1d286dc65657111",
+      "title": "18 并发与内存设计"
+    },
+    {
+      "path": "docs/architecture/backpressure.md",
+      "page_id": "page_d8a87a0af7408191b6d90904fee62720",
+      "url": "https://chatgpt.com/space/page_d8a87a0af7408191b6d90904fee62720",
+      "title": "19 积压容量与异常恢复"
+    },
+    {
+      "path": "docs/architecture/p0-operations.md",
+      "page_id": "page_43bad0f49bd88191a606a64c78c8dfa7",
+      "url": "https://chatgpt.com/space/page_43bad0f49bd88191a606a64c78c8dfa7",
+      "title": "20 P0 调度、恢复与容量基线"
+    },
+    {
+      "path": "docs/architecture/p1-storage.md",
+      "page_id": "page_5e5ac3a68d048191a7149e5e7a7ce2f8",
+      "url": "https://chatgpt.com/space/page_5e5ac3a68d048191a7149e5e7a7ce2f8",
+      "title": "21 P1 内容存储、数据库调度与运行契约"
+    },
+    {
+      "path": "docs/architecture/keycloak-integration.md",
+      "page_id": "page_34f1578055108191addb75cd4792ecd5",
+      "url": "https://chatgpt.com/space/page_34f1578055108191addb75cd4792ecd5",
+      "title": "24 Keycloak 本地授权联调"
+    },
+    {
+      "path": "docs/architecture/oauth-publication.md",
+      "page_id": "page_4e758c1a5f48819196ea5c8bd7b6f659",
+      "url": "https://chatgpt.com/space/page_4e758c1a5f48819196ea5c8bd7b6f659",
+      "title": "23 OAuth 接入与在线配置发布"
+    },
+    {
+      "path": "docs/architecture/mcp-tools.md",
+      "page_id": "page_bbbbf2c56a2081918c399d6012787f78",
+      "url": "https://chatgpt.com/space/page_bbbbf2c56a2081918c399d6012787f78",
+      "title": "22 MCP 工具发布与调用闭环"
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+{
+  "scenario": "failure",
+  "messages": 200,
+  "workers": 8,
+  "payload_bytes": 1024,
+  "capacity": 50,
+  "platform": "macOS-26.3-arm64-arm-64bit-Mach-O",
+  "binary": "/Users/zp/program/future/synquay/target/release/synquay-server",
+  "binary_sha256": "46fa0faff2f7b9ec177bbaf9549f60d3faadac1335db7ebea618cea7c4d2aa09",
+  "ingress_seconds": 0.05890149995684624,
+  "total_seconds_including_drain": 3.1378476249519736,
+  "request_statuses": {
+    "202": 50,
+    "503": 150
+  },
+  "rejection_codes": {
+    "capacity_exceeded": 150
+  },
+  "ingress_requests_per_second": 3395.499268210972,
+  "accepted_per_second": 848.874817052743,
+  "target_calls": {
+    "failure": 3,
+    "fast": 50
+  },
+  "ingress_latency": {
+    "p50_ms": 1.666832948103547,
+    "p95_ms": 5.083166994154453,
+    "p99_ms": 13.531874865293503
+  },
+  "accepted_delivery_latency": {
+    "p50_ms": 59.26820891909301,
+    "p95_ms": 94.66662514023483,
+    "p99_ms": 96.60349995829165
+  },
+  "rss_peak_bytes": null,
+  "rss_samples": 0,
+  "rss_sampling_errors": [
+    "PermissionError"
+  ],
+  "sampled_backlog_peak": 50,
+  "final": {
+    "database": {
+      "case_limit_per_kind": 100,
+      "database_bytes": 663552,
+      "disk_free_bytes": 140823601152,
+      "oldest_pending_ms": 3123,
+      "paused": true,
+      "pending_bytes": 79040,
+      "pending_items": 50,
+      "recovery_cases": [
+        {
+          "attempt": 1,
+          "delivery_id": "36341f5b-9ccc-4d1e-848c-4cf28a35e2af",
+          "kind": "delivery",
+          "revision": 0,
+          "state": "reconcile",
+          "target_id": "00000000-0000-0000-0000-000000000040"
+        },
+        {
+          "attempt": 1,
+          "delivery_id": "98e29fe3-4b66-494e-baac-e8beab103dca",
+          "kind": "delivery",
+          "revision": 0,
+          "state": "reconcile",
+          "target_id": "00000000-0000-0000-0000-000000000040"
+        },
+        {
+          "attempt": 1,
+          "delivery_id": "67745173-12b0-4c33-b428-ace9c148f15a",
+          "kind": "delivery",
+          "revision": 0,
+          "state": "reconcile",
+          "target_id": "00000000-0000-0000-0000-000000000040"
+        }
+      ],
+      "schema_version": 3,
+      "states": {
+        "deliveries": {
+          "pending": 47,
+          "reconcile": 3,
+          "submitted": 50
+        },
+        "routing_tasks": {
+          "completed": 50
+        }
+      },
+      "wal_bytes": 4136512
+    },
+    "runtime": {
+      "capacity_rejected": 150,
+      "db_rejected": 0,
+      "delivery_latency": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          0,
+          36,
+          15,
+          2,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 65421,
+        "unit": "microseconds"
+      },
+      "duplicates": 0,
+      "failed": 0,
+      "ingest_latency": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          23,
+          126,
+          51,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 103263,
+        "unit": "microseconds"
+      },
+      "ingress_rejected": 0,
+      "reconcile": 3,
+      "retried": 0,
+      "scope": "process_since_start",
+      "sql_execution": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          507,
+          210,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 59806,
+        "unit": "microseconds"
+      },
+      "sql_wait": {
+        "bounds": [
+          100,
+          1000,
+          5000,
+          10000,
+          50000,
+          100000,
+          1000000,
+          18446744073709551615
+        ],
+        "bucket_counts": [
+          452,
+          200,
+          65,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "sum": 131702,
+        "unit": "microseconds"
+      },
+      "stored": 50,
+      "submitted": 50,
+      "worker_errors": 0
+    },
+    "scheduler": {
+      "cooldown_ms": 30000,
+      "failure_threshold": 3,
+      "max_in_flight": 8,
+      "min_interval_ms": 0,
+      "strict_order": false
+    },
+    "targets": [
+      {
+        "circuit_open_remaining_ms": null,
+        "consecutive_failures": 0,
+        "processed": 50,
+        "target_id": "00000000-0000-0000-0000-000000000004"
+      },
+      {
+        "circuit_open_remaining_ms": 26894,
+        "consecutive_failures": 3,
+        "processed": 3,
+        "target_id": "00000000-0000-0000-0000-000000000040"
+      }
+    ]
+  },
+  "server_errors": [],
+  "limitations": "Finite local scenario; not a sustained-memory or production-throughput guarantee. No retries of rejected inputs. Delivery percentiles include successful targets only; pending work and errors are reported separately."
+}
