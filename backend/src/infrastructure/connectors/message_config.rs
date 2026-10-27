@@ -10,6 +10,7 @@ pub struct MessageConnection {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default = "enabled_by_default")]
     pub enabled: bool,
     pub config: ConnectionConfig,
 }
@@ -64,6 +65,8 @@ pub enum BodyMode {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MqttConfig {
+    #[serde(default, skip_serializing_if = "mqtt_capabilities_empty")]
+    pub capabilities: crate::domain::capability::mqtt::MqttCapabilities,
     pub host: String,
     pub port: u16,
     #[serde(default)]
@@ -192,6 +195,29 @@ impl MessageConnection {
 }
 impl MqttConfig {
     pub fn validate(&self) -> Result<(), PortError> {
+        if !self.capabilities.validate() {
+            return Err(invalid("invalid_mqtt_capabilities"));
+        }
+        crate::infrastructure::tool_runtime::schema::Schemas::compile(
+            self.capabilities
+                .definitions()
+                .into_iter()
+                .map(|d| d.input_schema),
+        )?;
+        if self
+            .capabilities
+            .resources
+            .iter()
+            .flat_map(|r| r.groups.iter())
+            .any(|r| {
+                self.subscription
+                    .as_ref()
+                    .is_none_or(|s| !rumqttc::matches(&r.topic, &s.topic))
+            })
+        {
+            return Err(invalid("resource_topic_not_subscribed"));
+        }
+
         if self.host.is_empty()
             || self.host.len() > 253
             || self
@@ -244,4 +270,12 @@ pub(crate) fn valid_topic(s: &str, filter: bool) -> bool {
         } else {
             !s.contains(['#', '+'])
         }
+}
+
+fn mqtt_capabilities_empty(c: &crate::domain::capability::mqtt::MqttCapabilities) -> bool {
+    c.tools.is_empty() && c.resources.is_empty()
+}
+
+fn enabled_by_default() -> bool {
+    true
 }

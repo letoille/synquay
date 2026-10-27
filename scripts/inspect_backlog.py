@@ -20,7 +20,7 @@ def main():
     try:
         connection.execute("BEGIN")
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18):
+        if version not in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
             parser.error(f"Expected schema 2, 3, 4, 5, 6, 7, 8 or 9, found {version}; do not edit the database manually.")
         policy = json.loads(connection.execute("SELECT record FROM capacity_policy WHERE singleton=1").fetchone()[0])
         query = "SELECT workspace,items,bytes,paused FROM capacity_state"

@@ -62,6 +62,7 @@ impl RoutingService {
                 code: "route_limit",
             });
         }
+        tracing::debug!(event="route.started",workspace_id=%scope.workspace_id,connection_id=%scope.connection_id,event_id=%event_id,correlation_id=%event.correlation_id,"Evaluating routes");
         let mut rules_seen = HashSet::new();
         let mut deliveries = vec![];
         for rule in self.rules.matching(&event).await? {
@@ -98,6 +99,7 @@ impl RoutingService {
             let mut message = self.renderer.render(&event, &rule).await?;
             // Forwarding does not grant permission to use a reply-route reference from payloads.
             message.reply_route_id = None;
+            tracing::debug!(event="route.target_matched",event_id=%event_id,route_rule_id=%rule.rule_id,target_id=%destination.id,revision=rule.revision,"Route target matched");
             deliveries.push(PendingDelivery {
                 delivery_id: Uuid::new_v4(),
                 route_rule: Some((rule.rule_id, rule.revision)),

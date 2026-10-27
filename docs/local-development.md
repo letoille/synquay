@@ -74,7 +74,7 @@ If you change the frontend port, update `admin.allowed_origins` in the local sec
 
 ## Logs and checks
 
-`RUST_LOG=debug` changes verbosity; `SYNQUAY_LOG_FORMAT=json` enables structured logs. Logs go to stderr. API request IDs correlate responses and request logs. OpenTelemetry export and cross-service tracing are not yet implemented.
+`RUST_LOG=debug` changes verbosity; `SYNQUAY_LOG_FORMAT=json` enables structured logs. Direct development runs log to stderr. The Debian systemd service captures output in `/var/log/synquay/synquay.log` with rotation; see the [deployment guide](debian.md#日志与归档). API request IDs correlate responses and request logs. OpenTelemetry export and cross-service tracing are not yet implemented.
 
 ```bash
 npm run check

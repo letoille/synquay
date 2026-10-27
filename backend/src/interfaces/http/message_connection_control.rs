@@ -24,6 +24,7 @@ pub(super) fn router(state: AppState) -> Router {
         .expect("connection control requires runtime");
     Router::new()
         .route("/api/message-connections", get(view).post(change))
+        .route("/api/message-connections/{id}/states", get(states))
         .route(
             "/api/message-connections/{id}/conversations",
             get(conversations),
@@ -39,7 +40,11 @@ async fn view(State(state): State<AppState>) -> Response {
         Some(p) => match p.connection_snapshot() {
             Ok(snapshot) => {
                 let public = public_snapshot(&snapshot);
-                Json(serde_json::json!({"available":p.agent.is_none(),"snapshot":public}))
+                let observations = match p.connection_observations(&snapshot).await {
+                    Ok(v) => v,
+                    Err(e) => return error(e),
+                };
+                Json(serde_json::json!({"available":p.agent.is_none(),"snapshot":public,"observations":observations}))
                     .into_response()
             }
             Err(e) => error(e),
@@ -63,7 +68,7 @@ async fn change(State(state): State<AppState>, request: Request) -> Response {
     {
         return rejection(StatusCode::UNSUPPORTED_MEDIA_TYPE, "json_required");
     }
-    let bytes = match to_bytes(request.into_body(), 32 * 1024).await {
+    let bytes = match to_bytes(request.into_body(), 128 * 1024).await {
         Ok(b) => b,
         Err(_) => return error(PortError::PayloadTooLarge),
     };
@@ -75,10 +80,25 @@ async fn change(State(state): State<AppState>, request: Request) -> Response {
     let connection = input.connection.clone();
     match p.change_connection(actor, input).await {
         Ok(revision) => {
+            if let Some(tools) = state.tools
+                && let Err(e) = tools.refresh_device_tools().await
+            {
+                return error(e);
+            }
             Json(serde_json::json!({"operation_id":id,"revision":revision})).into_response()
         }
         Err(PortError::InvalidInput { code }) => validation::response(code, connection.as_ref()),
         Err(e) => error(e),
+    }
+}
+
+async fn states(State(state): State<AppState>, Path(id): Path<uuid::Uuid>) -> Response {
+    match state.tools {
+        Some(t) => match t.device_states(id).await {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => error(e),
+        },
+        None => error(PortError::Unsupported),
     }
 }
 

@@ -138,7 +138,7 @@ impl ToolRuntime {
                     expected_revision: input.expected_revision,
                     request,
                     tool: serde_json::to_value(&input.tool).map_err(|_| PortError::Unavailable)?,
-                    profile: config.profile(),
+                    profile: super::devices::preserve_devices(config.profile(), &record)?,
                     snapshot: config.snapshot(),
                 })
                 .await?;
@@ -341,7 +341,7 @@ impl ToolRuntime {
                         request,
                         tool: serde_json::to_value(&replacement)
                             .map_err(|_| PortError::Unavailable)?,
-                        profile: config.profile(),
+                        profile: super::devices::preserve_devices(config.profile(), &record)?,
                         snapshot: config.snapshot(),
                     },
                     id,
@@ -350,7 +350,7 @@ impl ToolRuntime {
                 .await?;
             runtime
                 .schemas
-                .replace(schemas)
+                .extend(schemas)
                 .map_err(|_| PortError::OutcomeUnknown)?;
             runtime
                 .registry

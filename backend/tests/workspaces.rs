@@ -542,6 +542,6 @@ async fn v8_failure_keeps_v7_and_does_not_leave_partial_workspace_tables() {
     assert_eq!(
         sql.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        18
+        20
     );
 }

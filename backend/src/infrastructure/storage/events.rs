@@ -56,6 +56,7 @@ impl SqliteStore {
             tx.execute("INSERT INTO events(workspace,source,event_id,source_event_id,received_ms,record,config_revision,fingerprint) VALUES(?1,?2,?3,?4,?5,?6,(SELECT revision FROM active_release WHERE singleton=1),?7)",
                 params![w,s,event.event_id.to_string(),event.source_event_id,millis(event.received_at)?,record,fingerprint]).map_err(db_error)?;
             super::conversations::observe(&tx,&event)?;
+            super::device_state::observe(&tx,&event)?;
             if let EventPayload::Content(reference)=&event.payload { super::content::attach(&tx,event.scope,event.event_id,reference)?; }
             tx.execute("INSERT INTO routing_tasks(workspace,source,event_id,state,due_ms) VALUES(?1,?2,?3,'ready',?4)",params![w,s,event.event_id.to_string(),millis(event.received_at)?]).map_err(db_error)?;
             tx.commit().map_err(|_| PortError::OutcomeUnknown)?;

@@ -109,6 +109,13 @@ async fn scenario() {
             body: BodyMode::Payload,
         }),
     };
+    let mut without_enabled = serde_json::to_value(&out).unwrap();
+    without_enabled.as_object_mut().unwrap().remove("enabled");
+    assert!(
+        serde_json::from_value::<MessageConnection>(without_enabled)
+            .unwrap()
+            .enabled
+    );
     let first = input(0, Some(webhook.clone()), webhook.id);
     assert_eq!(p.change_connection(actor, first.clone()).await.unwrap(), 1);
     assert_eq!(
@@ -191,6 +198,19 @@ async fn scenario() {
         json!({"temperature":24})
     );
     assert!(received.try_recv().is_err());
+    let observed = p
+        .connection_observations(&p.connection_snapshot().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(observed[webhook.id.to_string()]["received"], 1);
+    assert_eq!(
+        observed[webhook.id.to_string()]["status"]["state"],
+        "listening"
+    );
+    assert_eq!(observed[out.id.to_string()]["sent"], 1);
+    assert_eq!(observed[out.id.to_string()]["status"]["state"], "on_demand");
+    assert_eq!(p.routes_view().await.unwrap().matched[&route_id], 1);
+
     let paused = MessageConnection {
         enabled: false,
         ..webhook.clone()
@@ -371,6 +391,7 @@ async fn managed_mqtt_subscription_and_publish_share_configuration_and_route_bot
         description: "".into(),
         enabled: true,
         config: ConnectionConfig::Mqtt(MqttConfig {
+            capabilities: Default::default(),
             host: "127.0.0.1".into(),
             port,
             username: None,

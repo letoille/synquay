@@ -59,6 +59,10 @@ impl QqBotSink {
             .await
             .map_err(|_| PortError::Unavailable)?;
         let status = r.status();
+        let limited = super::super::http_retry::rate_limited(r.headers());
+        if status.as_u16() == 429 {
+            return Err(limited);
+        }
         let v = read_json(r).await.map_err(|_| {
             if status.is_success() {
                 PortError::Unavailable
@@ -67,7 +71,12 @@ impl QqBotSink {
             }
         })?;
         if !status.is_success() || code(&v) != 0 {
-            return Err(provider_error(status, code(&v), false));
+            let error = provider_error(status, code(&v), false);
+            return Err(if matches!(error, PortError::RateLimited { .. }) {
+                limited
+            } else {
+                error
+            });
         }
         let value = v["access_token"]
             .as_str()
@@ -210,7 +219,7 @@ impl MessageSink for QqBotSink {
             }
             let body = self.message(&r.message)?;
             let (kind, target, _) = self.destination(&r.message)?;
-            let token = tokio::select! {biased;_=ctx.stopped()=>return Err(PortError::Cancelled),r=self.access_token()=>r?};
+            let token = tokio::select! {biased;_=ctx.stopped()=>return Err(PortError::Cancelled),r=self.access_token()=>r.map_err(|e| match e { PortError::Unavailable => PortError::NotSent { retry_after: None }, PortError::RateLimited { retry_after } => PortError::NotSent { retry_after: Some(retry_after) }, other => other })?};
             let mut auth = reqwest::header::HeaderValue::from_str(&format!("QQBot {token}"))
                 .map_err(|_| PortError::PermissionDenied)?;
             auth.set_sensitive(true);
@@ -229,14 +238,21 @@ impl MessageSink for QqBotSink {
                     .await
                     .map_err(|e| {
                         if e.is_connect() {
-                            PortError::Unavailable
+                            PortError::NotSent { retry_after: None }
                         } else {
                             PortError::OutcomeUnknown
                         }
                     })?;
                 let status = response.status();
+                let limited = super::super::http_retry::rate_limited(response.headers());
+                if status.as_u16() == 429 {
+                    return Err(limited);
+                }
                 if status.as_u16() == 401 {
                     *self.token.lock().await = None;
+                    // QQ rejected authentication, so no message was accepted. Refresh
+                    // the token on the next bounded outbox attempt, not in a tight loop.
+                    return Err(PortError::NotSent { retry_after: None });
                 }
                 let v = read_json(response).await.map_err(|e| {
                     if status.is_success() {
@@ -253,7 +269,12 @@ impl MessageSink for QqBotSink {
                         status = status.as_u16(),
                         provider_code = code
                     );
-                    return Err(provider_error(status, code, true));
+                    let error = provider_error(status, code, true);
+                    return Err(if matches!(error, PortError::RateLimited { .. }) {
+                        limited
+                    } else {
+                        error
+                    });
                 }
                 let id = v["id"]
                     .as_str()

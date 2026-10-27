@@ -1094,7 +1094,7 @@ async fn v7_history_index_failure_preserves_v6_and_can_be_retried() {
     assert_eq!(
         sql.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        18
+        20
     );
 }
 
@@ -1769,7 +1769,7 @@ async fn default_mcp_edits_restore_without_admin_and_server_migration_is_atomic_
     let rollback = dir.path().join("rollback");
     drop(SqliteStore::open(&rollback).await.unwrap());
     let c = rusqlite::Connection::open(&rollback).unwrap();
-    c.execute_batch("DROP TABLE connection_secrets; DROP TABLE connection_conversations; DROP INDEX routing_unresolved_source; DROP TABLE message_connection_operations; DROP TABLE message_connections; DROP TABLE managed_routes; DROP TABLE route_operations; DROP INDEX deliveries_by_route_state; ALTER TABLE deliveries DROP COLUMN route_rule_id; DROP TABLE tool_connection_changes; DROP TABLE tool_connection_overrides; DROP TABLE mcp_servers; DROP TABLE mcp_server_changes; CREATE TABLE mcp_server_changes(incompatible INTEGER); PRAGMA user_version=11;").unwrap();
+    c.execute_batch("DROP TRIGGER count_received; DROP TRIGGER count_submitted; DROP TABLE message_totals; ALTER TABLE deliveries DROP COLUMN counted_submitted; DROP TABLE connection_secrets; DROP TABLE connection_conversations; DROP INDEX routing_unresolved_source; DROP TABLE message_connection_operations; DROP TABLE message_connections; DROP TABLE managed_routes; DROP TABLE route_operations; DROP INDEX deliveries_by_route_state; ALTER TABLE deliveries DROP COLUMN route_rule_id; DROP TABLE tool_connection_changes; DROP TABLE tool_connection_overrides; DROP TABLE mcp_servers; DROP TABLE mcp_server_changes; CREATE TABLE mcp_server_changes(incompatible INTEGER); PRAGMA user_version=11;").unwrap();
     assert!(SqliteStore::open(&rollback).await.is_err());
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
@@ -1782,7 +1782,7 @@ async fn default_mcp_edits_restore_without_admin_and_server_migration_is_atomic_
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        18
+        20
     );
 }
 

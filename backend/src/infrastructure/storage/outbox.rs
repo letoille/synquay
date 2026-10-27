@@ -61,6 +61,16 @@ impl DeliveryOutbox for SqliteStore {
             }
             let delivery_ids:Vec<_>=plan.deliveries.iter().map(|j|j.delivery_id).collect();
             tx.execute("INSERT INTO dispatches(workspace,dispatch_key,receipt,reply_fingerprint) VALUES(?1,?2,?3,?4)",params![w,key,encode(&delivery_ids)?,fingerprint]).map_err(db_error)?;
+            // Resolve managed route IDs while the routing lane keeps the snapshot stable.
+            // Dispatch deduplication above ensures retries cannot increment these counters twice.
+            let rule_ids:Vec<_>=plan.deliveries.iter().filter_map(|j|j.route_rule.map(|(id,_)|id)).collect();
+            let matched:Vec<String>={
+                let mut query=tx.prepare("SELECT DISTINCT json_extract(r.value,'$.id') FROM managed_routes m, json_each(m.record,'$.routes') r, json_each(r.value,'$.targets') t WHERE m.workspace=?1 AND json_extract(t.value,'$.rule_id') IN (SELECT value FROM json_each(?2))").map_err(db_error)?;
+                query.query_map(params![w,encode(&rule_ids)?],|r|r.get(0)).map_err(db_error)?.collect::<Result<_,_>>().map_err(db_error)?
+            };
+            for route in &matched {
+                tx.execute("INSERT INTO message_totals(workspace,kind,id,total) VALUES(?1,'matched',?2,1) ON CONFLICT(workspace,kind,id) DO UPDATE SET total=total+1",params![w,route]).map_err(db_error)?;
+            }
             for (job,record) in plan.deliveries.into_iter().zip(records) {
                 tx.execute("INSERT INTO deliveries(workspace,delivery_id,dispatch_key,record,state,due_ms,target_id,config_revision,route_rule_id) VALUES(?1,?2,?3,?4,'pending',?5,?6,?7,?8)",params![w,job.delivery_id.to_string(),key,record,millis(SystemTime::now())?,job.destination.id.to_string(),config_revision,job.route_rule.map(|(id,_)|id.to_string())]).map_err(db_error)?;
             }
@@ -69,6 +79,8 @@ impl DeliveryOutbox for SqliteStore {
             }
             capacity::release_completed(&tx,&w,&key)?;
             tx.commit().map_err(|_|PortError::OutcomeUnknown)?;
+            for route in matched { tracing::info!(event="route.matched",workspace_id=%workspace,dispatch_key=%key,route_id=%route,"Message routed"); }
+            tracing::info!(event="route.dispatched",workspace_id=%workspace,dispatch_key=%key,delivery_count=delivery_ids.len(),"Routing committed");
             Ok(DispatchReceipt {delivery_ids,duplicate:false})
         }))
     }

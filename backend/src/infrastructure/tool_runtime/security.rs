@@ -66,6 +66,13 @@ impl SecurityConfig {
         })
     }
     pub fn validate(&self, tools: &ToolsConfig) -> Result<(), PortError> {
+        self.validate_with_tools(tools, &std::collections::HashSet::new())
+    }
+    pub(crate) fn validate_with_tools(
+        &self,
+        tools: &ToolsConfig,
+        additional: &std::collections::HashSet<String>,
+    ) -> Result<(), PortError> {
         let invalid = || PortError::InvalidInput {
             code: "invalid_security_config",
         };
@@ -175,11 +182,11 @@ impl SecurityConfig {
                     return Err(invalid());
                 }
                 let mut names = HashSet::new();
-                if !g
-                    .tools
-                    .iter()
-                    .all(|n| names.insert(n) && tools.tools.iter().any(|t| &t.public_name == n))
-                {
+                if !g.tools.iter().all(|n| {
+                    names.insert(n)
+                        && (tools.tools.iter().any(|t| &t.public_name == n)
+                            || additional.contains(n))
+                }) {
                     return Err(invalid());
                 }
             }

@@ -554,3 +554,95 @@ async fn redirect_is_not_followed_and_targets_are_operator_restricted() {
     stop.cancel();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn refused_connection_is_retried_after_restart_without_replaying_an_accepted_message() {
+    use synquay_server::domain::event::{EventPayload, IncomingEvent};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let url = format!("http://{address}/");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("retry.db");
+    let p = Pipeline::build(config(&path, &url), TOKEN.into(), None)
+        .await
+        .unwrap();
+    p.accept(
+        Uuid::new_v4(),
+        IncomingEvent {
+            route_context: None,
+            event_type: "retry.test".into(),
+            schema_version: 1,
+            occurred_at: None,
+            source_event_id: Some("once".into()),
+            payload: EventPayload::Json(json!({"test":true})),
+        },
+    )
+    .await
+    .unwrap();
+    p.tick(&CancellationToken::new()).await.unwrap();
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let (state, attempt, due): (String, u32, i64) = sql
+        .query_row("SELECT state,attempt,due_ms FROM deliveries", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap();
+    assert_eq!((state.as_str(), attempt), ("pending", 1));
+    drop(p);
+    let p = Pipeline::build(config(&path, &url), TOKEN.into(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        sql.query_row("SELECT due_ms FROM deliveries", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        due
+    );
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/",
+                post(move || {
+                    let seen = seen.clone();
+                    async move {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::ACCEPTED
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            p.tick(&CancellationToken::new()).await.unwrap();
+            if count.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    p.tick(&CancellationToken::new()).await.unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        sql.query_row("SELECT attempt FROM deliveries", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        sql.query_row(
+            "SELECT total FROM message_totals WHERE kind='sent'",
+            [],
+            |r| r.get::<_, u32>(0)
+        )
+        .unwrap(),
+        1
+    );
+    server.abort();
+}

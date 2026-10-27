@@ -1,6 +1,7 @@
 //! Protocol-independent contracts. Descriptions are data, never authority.
 pub mod binding;
 pub mod documentation;
+pub mod mqtt;
 pub mod resource;
 
 use super::{connector::ConnectionScope, tool::ToolDefinition};

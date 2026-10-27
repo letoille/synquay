@@ -1,4 +1,4 @@
-//! SQLite v12 schema; v1 record encodings remain readable. Not a public wire DTO.
+//! SQLite v19 schema; v1 record encodings remain readable. Not a public wire DTO.
 pub mod agent;
 mod audit;
 pub mod capacity;
@@ -37,6 +37,7 @@ const DATABASE_CRITICAL_LIMIT: usize = 8;
 
 #[derive(Clone)]
 pub struct SqliteStore {
+    pub(crate) device_io: Arc<tokio::sync::RwLock<()>>,
     connection: Arc<Mutex<Connection>>,
     scheduler: Arc<scheduling::Scheduler>,
     admission: Arc<Semaphore>,
@@ -176,7 +177,7 @@ impl SqliteStore {
                 1 => tx
                     .execute_batch(include_str!("migration_v2.sql"))
                     .map_err(db_error)?,
-                2..=18 => {}
+                2..=20 => {}
                 _ => return Err(PortError::Unsupported),
             }
             if version < 3 {
@@ -248,8 +249,17 @@ impl SqliteStore {
                 tx.execute_batch(include_str!("migration_v18.sql"))
                     .map_err(db_error)?;
             }
+            if version < 19 {
+                tx.execute_batch(include_str!("migration_v19.sql"))
+                    .map_err(db_error)?;
+            }
+            if version < 20 {
+                tx.execute_batch(include_str!("migration_v20.sql"))
+                    .map_err(db_error)?;
+            }
             tx.commit().map_err(db_error)?;
             Ok(Self {
+                device_io: device_state::gate(&path),
                 connection: Arc::new(Mutex::new(connection)),
                 scheduler: Arc::new(scheduling::Scheduler::default()),
                 admission: Arc::new(Semaphore::new(DATABASE_ADMISSION_LIMIT)),
@@ -346,6 +356,7 @@ impl SqliteStore {
 }
 
 mod connection_secrets;
+pub mod device_state;
 mod message_connections;
 
 pub mod conversations;

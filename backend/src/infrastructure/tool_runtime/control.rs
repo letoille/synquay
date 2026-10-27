@@ -33,9 +33,19 @@ pub fn adopt_snapshot(config: &mut ToolsConfig, record: &Value) -> Result<(), Po
         tool.exposed = entry["exposed"].as_bool().ok_or(PortError::Unavailable)?;
     }
     config.validate()?;
-    if serde_json::to_value(config.profile()).map_err(|_| PortError::Unavailable)?
-        != record["profile"]
-    {
+    let mut http_profile = record["profile"].clone();
+    if let Some(tools) = http_profile["tools"].as_array_mut() {
+        tools.retain(|t| {
+            !t["public_name"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("mqtt_"))
+                || config
+                    .tools
+                    .iter()
+                    .any(|h| t["public_name"] == h.public_name)
+        });
+    }
+    if serde_json::to_value(config.profile()).map_err(|_| PortError::Unavailable)? != http_profile {
         return Err(PortError::Conflict);
     }
     Ok(())
@@ -61,8 +71,14 @@ impl ToolRuntime {
             .ok_or(PortError::NotFound)?;
         adopt_snapshot(&mut config, &record)?;
         let draft = self.store.draft(scope.clone()).await?;
+        let mut tool_views = config
+            .tools
+            .iter()
+            .map(|t| serde_json::json!(t))
+            .collect::<Vec<_>>();
+        tool_views.extend(self.device_tool_views().await?);
         Ok(
-            serde_json::json!({"workspace":self.workspace_admin(false).await?.workspace,"revision":config.revision,"profile_id":config.profile_id,"admin_id":scope.actor_id,"tools":config.tools,"draft":draft,
+            serde_json::json!({"workspace":self.workspace_admin(false).await?.workspace,"revision":config.revision,"profile_id":config.profile_id,"admin_id":scope.actor_id,"tools":tool_views,"draft":draft,
                 "content": {
                     "revision":config.mcp_content.revision,
                     "resources":config.mcp_content.resources.iter().map(|r|serde_json::json!({"id":r.id,"description":r.description,"mime_type":r.mime_type,"kind":"resource","parameter":null}))
@@ -110,10 +126,13 @@ impl ToolRuntime {
         self.workspace_admin(true).await?;
         let scope = self.publication_scope().await?;
         let inventory = self.inventory_snapshot()?;
+        let devices = self.device_tools().await?;
         let mut names = HashSet::new();
         if input.exposed_tools.len() > 32
             || !input.exposed_tools.iter().all(|n| {
-                names.insert(n.clone()) && inventory.tools.iter().any(|t| &t.public_name == n)
+                names.insert(n.clone())
+                    && (inventory.tools.iter().any(|t| &t.public_name == n)
+                        || devices.iter().any(|t| &t.public_name == n))
             })
         {
             return Err(PortError::InvalidInput {
@@ -152,6 +171,7 @@ impl ToolRuntime {
         tokio::spawn(async move {
             let _permit = permit;
             let _guard = runtime.publication_gate.write().await;
+            let _devices_guard = runtime.store.device_io.read().await;
             runtime.workspace_admin(true).await?;
             let scope = runtime.publication_scope().await?;
             if let Some(receipt) = runtime
@@ -186,12 +206,20 @@ impl ToolRuntime {
                 tool.exposed = draft.exposed_tools.contains(&tool.public_name);
             }
             config.validate()?;
+            let mut profile = config.profile();
+            profile.tools.extend(
+                runtime
+                    .device_tools()
+                    .await?
+                    .into_iter()
+                    .filter(|t| draft.exposed_tools.contains(&t.public_name)),
+            );
             runtime
                 .store
                 .publish_draft(PublicationPlan {
                     scope,
                     request,
-                    profile: config.profile(),
+                    profile,
                     snapshot: config.snapshot(),
                 })
                 .await

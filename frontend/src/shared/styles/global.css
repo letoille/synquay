@@ -1209,3 +1209,66 @@ input[type=checkbox] {
 .connection-editor [aria-invalid="true"]:focus-visible { box-shadow:0 0 0 3px color-mix(in srgb,var(--error) 14%,transparent); }
 .field-error { color:var(--error); font-size:12px; line-height:1.5; margin:0; font-weight:400; }
 .form-validation-summary { color:var(--error); font-size:13px; margin:0 0 16px; }
+
+.connection-counters { display:flex; gap:18px; margin-top:8px; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+
+.capability-editor { margin-top:24px; border-top:1px solid var(--border); padding-top:16px; }
+.capability-panel {border:1px solid var(--border);border-radius:10px;padding:14px;margin:12px 0;}
+.capability-panel summary {font-weight:600;cursor:pointer;margin-bottom:14px;}
+.capability-mapping {display:grid;grid-template-columns:1fr 1fr 1.2fr auto;gap:8px;margin:10px 0;align-items:center;}
+.capability-mapping>* {min-width:0;}
+@media(max-width:640px){.capability-mapping {grid-template-columns:1fr 1fr;}}
+
+.resource-state-table {width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;}
+.resource-state-table th,.resource-state-table td{text-align:left;padding:8px;border-bottom:1px solid var(--border);overflow-wrap:anywhere;}
+
+/* MQTT capability configuration */
+.capability-editor { border-color:var(--line); }
+.capability-editor > .section-bar { margin:24px 0 10px; }
+.capability-editor > .section-bar h3 { margin:0; font-size:15px; }
+.capability-panel { padding:0; margin:10px 0; border:1px solid var(--line); border-radius:9px; background:var(--surface); overflow:hidden; }
+.capability-panel > summary { position:relative; display:flex; align-items:center; gap:10px; min-height:48px; margin:0; padding:12px 36px 12px 14px; list-style:none; color:var(--ink); font-size:13px; }
+.capability-panel > summary::-webkit-details-marker,.capability-advanced > summary::-webkit-details-marker { display:none; }
+.capability-panel > summary::after,.capability-advanced > summary::after { content:'›'; position:absolute; right:15px; color:var(--muted); font-size:19px; line-height:1; transform:rotate(90deg); transition:transform .15s; }
+.capability-panel[open] > summary::after,.capability-advanced[open] > summary::after { transform:rotate(-90deg); }
+.capability-panel > summary small { color:var(--muted); font-size:12px; font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.capability-panel[open] > summary { border-bottom:1px solid var(--line); background:var(--surface-muted); }
+.capability-panel-body { display:grid; gap:14px; padding:16px; min-width:0; }
+.capability-panel-body > .ui-field { margin:0; }
+.capability-panel-body .section-bar,.capability-subheading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:2px 0 0; font-size:13px; }
+.capability-panel-body .capability-mapping { margin:0; }
+.capability-group { margin:0; background:var(--surface); }
+.capability-group > summary { min-height:44px; }
+.capability-advanced { position:relative; border:1px solid var(--line); border-radius:7px; }
+.capability-advanced > summary { position:relative; padding:10px 34px 10px 12px; cursor:pointer; color:var(--muted); font-size:12px; font-weight:600; list-style:none; }
+.capability-advanced[open] > summary { border-bottom:1px solid var(--line); }
+.capability-advanced[open] { padding-bottom:12px; }
+.capability-advanced > :not(summary) { margin:12px 12px 0; }
+.capability-panel-footer { display:flex; justify-content:space-between; align-items:center; gap:10px; padding-top:12px; border-top:1px solid var(--line); }
+.capability-panel-footer > :last-child { margin-left:auto; }
+.capability-delete { color:var(--danger, #c64655); }
+.capability-mapping { grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) auto; gap:8px; align-items:start; }
+.capability-mapping label { color:var(--muted); font-size:12px; }
+.capability-mapping .ui-icon-action { min-width:36px; min-height:40px; }
+@media(max-width:560px) { .capability-panel-body { padding:12px; } .capability-panel > summary small { display:none; } .capability-mapping { grid-template-columns:repeat(2,minmax(0,1fr)); } .capability-panel-body .ui-field { grid-template-columns:1fr; gap:5px; } .capability-panel-body .ui-field > label { padding-top:0; } }
+
+.capability-panel > summary,.capability-advanced > summary { width:auto; }
+.capability-state-field:has(label) > label { grid-column:1 / 4; grid-row:2; display:flex; align-items:center; gap:10px; }
+.capability-state-field:has(label) > label > div { flex:1; }
+.capability-state-field:has(label) > button { grid-column:4; grid-row:1; }
+@media(max-width:560px) { .capability-state-field:has(label) > label,.capability-state-field:has(label) > button { grid-column:auto; grid-row:auto; } }
+
+/* Dedicated MQTT tool and resource editor */
+.capability-page { max-width:1000px; margin:0 auto; padding-bottom:40px; }
+.capability-page-header { margin-bottom:24px; }
+.capability-page-header h1 { margin:12px 0 6px; font-size:24px; letter-spacing:-.4px; }
+.capability-page-header p { margin:0; color:var(--muted); font-size:13px; }
+.capability-back { padding:4px 0; color:var(--muted); }
+.capability-back svg { transform:rotate(180deg); }
+.capability-page-form { padding:24px 28px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.capability-page .capability-editor { margin:0; border:0; padding:0; }
+.capability-page .capability-editor > .section-bar:first-of-type { margin-top:0; }
+.capability-page-footer { display:flex; justify-content:flex-end; gap:10px; padding-top:20px; margin-top:24px; border-top:1px solid var(--line); }
+@media(max-width:560px) { .capability-page-form { padding:18px; } }
+
+.page-heading[hidden] { display:none; }

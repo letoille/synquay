@@ -56,6 +56,8 @@ struct Fixture {
     fail_audit_end: AtomicBool,
     fail_finish: AtomicBool,
     sink_unknown: AtomicBool,
+    sink_error: Mutex<Option<PortError>>,
+    delivery_attempt: AtomicUsize,
     sink_unavailable: AtomicBool,
     calls: AtomicUsize,
     sends: AtomicUsize,
@@ -132,6 +134,8 @@ impl Fixture {
             fail_audit_end: AtomicBool::new(false),
             fail_finish: AtomicBool::new(false),
             sink_unknown: AtomicBool::new(false),
+            sink_error: Mutex::new(None),
+            delivery_attempt: AtomicUsize::new(1),
             sink_unavailable: AtomicBool::new(false),
             calls: AtomicUsize::new(0),
             sends: AtomicUsize::new(0),
@@ -457,7 +461,7 @@ impl DeliveryOutbox for Fixture {
             Ok(Some(LeasedDelivery {
                 token,
                 job,
-                attempt: 1,
+                attempt: self.delivery_attempt.load(Ordering::SeqCst) as u32,
             }))
         })
     }
@@ -532,6 +536,9 @@ impl MessageSink for Fixture {
                 status: DeliveryStatus::Accepted,
             };
             self.sent.lock().unwrap().push(request);
+            if let Some(error) = self.sink_error.lock().unwrap().clone() {
+                return Err(error);
+            }
             if self.sink_unknown.load(Ordering::SeqCst) {
                 return Err(PortError::OutcomeUnknown);
             }
@@ -868,4 +875,46 @@ async fn temporary_preflight_failure_defers_non_idempotent_delivery_without_send
     assert!(matches!(report.outcome, DeliveryOutcome::Deferred(_)));
     assert_eq!(f.sends.load(Ordering::SeqCst), 0);
     assert!(!f.order.lock().unwrap().contains(&"mark_sending"));
+}
+
+#[tokio::test]
+async fn rejected_or_unsent_deliveries_retry_with_bounds_but_unknown_sends_do_not() {
+    for (error, attempt, expected) in [
+        (PortError::NotSent { retry_after: None }, 1, "deferred"),
+        (PortError::NotSent { retry_after: None }, 8, "failed"),
+        (
+            PortError::RateLimited {
+                retry_after: Duration::from_secs(120),
+            },
+            1,
+            "limited",
+        ),
+        (
+            PortError::RateLimited {
+                retry_after: Duration::from_secs(120),
+            },
+            8,
+            "failed",
+        ),
+        (PortError::OutcomeUnknown, 1, "reconcile"),
+        (PortError::PermissionDenied, 1, "failed"),
+    ] {
+        let f = Fixture::new();
+        f.delivery_attempt.store(attempt, Ordering::SeqCst);
+        *f.sink_error.lock().unwrap() = Some(error);
+        let m = f.modules();
+        let event = f.ingest().await;
+        m.routing.route(&f.context(), event).await.unwrap();
+        let report = m.delivery.run_one(&f.context()).await.unwrap().unwrap();
+        match (expected, report.outcome) {
+            ("deferred", DeliveryOutcome::Deferred(d)) => {
+                assert!(d >= Duration::from_secs(1) && d <= Duration::from_secs(2))
+            }
+            ("limited", DeliveryOutcome::Deferred(d)) => assert!(d >= Duration::from_secs(120)),
+            ("failed", DeliveryOutcome::Failed { .. })
+            | ("reconcile", DeliveryOutcome::Reconcile) => {}
+            (expected, _) => panic!("unexpected delivery outcome; expected {expected}"),
+        }
+        assert!(report.state_recorded);
+    }
 }

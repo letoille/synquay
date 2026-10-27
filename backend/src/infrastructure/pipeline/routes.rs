@@ -51,6 +51,7 @@ pub struct RoutesView {
     pub sources: Vec<RouteSource>,
     pub snapshot: RouteSnapshot,
     pub pagination: RoutePagination,
+    pub matched: std::collections::BTreeMap<Uuid, u64>,
     pub counts: std::collections::BTreeMap<Uuid, std::collections::BTreeMap<String, u64>>,
 }
 impl Pipeline {
@@ -123,7 +124,16 @@ impl Pipeline {
                     .collect(),
             )
             .await?;
+        let matched = self
+            .store
+            .message_totals(
+                self.source.workspace_id,
+                "matched",
+                snapshot.routes.iter().map(|r| r.id).collect(),
+            )
+            .await?;
         Ok(RoutesView {
+            matched,
             available: self.agent.is_none(),
             supports_processors: true,
             supports_commands: true,

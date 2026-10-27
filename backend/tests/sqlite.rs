@@ -365,3 +365,99 @@ async fn unknown_schema_version_is_not_downgraded() {
         99
     );
 }
+
+#[tokio::test]
+async fn cumulative_message_counts_deduplicate_finish_survive_cleanup_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("counts.db");
+    let store = SqliteStore::open(&path).await.unwrap();
+    let scope = scope();
+    let e = event(scope);
+    store.append(e.clone()).await.unwrap();
+    store.append(e.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .message_totals(scope.workspace_id, "received", vec![scope.connection_id])
+            .await
+            .unwrap()[&scope.connection_id],
+        1
+    );
+    let job = job(scope);
+    let target = job.destination.id;
+    store.enqueue(plan(job)).await.unwrap();
+    let leased = store
+        .claim(
+            scope.workspace_id,
+            SystemTime::now(),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    store.mark_sending(leased.token.clone()).await.unwrap();
+    let result = DeliveryOutcome::Submitted(DeliveryReceipt {
+        delivery_id: leased.job.delivery_id,
+        external_message_id: None,
+        status: DeliveryStatus::Accepted,
+    });
+    store
+        .finish(leased.token.clone(), result.clone())
+        .await
+        .unwrap();
+    assert!(store.finish(leased.token, result).await.is_err());
+    assert_eq!(
+        store
+            .message_totals(scope.workspace_id, "sent", vec![target])
+            .await
+            .unwrap()[&target],
+        1
+    );
+    assert!(
+        store
+            .message_totals(Uuid::new_v4(), "sent", vec![target])
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .enqueue(DispatchPlan {
+            workspace_id: scope.workspace_id,
+            key: DispatchKey::Event {
+                scope,
+                event_id: e.event_id,
+            },
+            deliveries: vec![],
+        })
+        .await
+        .unwrap();
+    let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute("UPDATE retired_work SET retired_ms=0", [])
+        .unwrap();
+    store
+        .maintain(scope.workspace_id, Default::default())
+        .await
+        .unwrap();
+    for table in ["events", "deliveries"] {
+        let remaining: u64 = c
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0, "retention deleted {table}");
+    }
+    drop(c);
+    drop(store);
+    let reopened = SqliteStore::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .message_totals(scope.workspace_id, "received", vec![scope.connection_id])
+            .await
+            .unwrap()[&scope.connection_id],
+        1
+    );
+    assert_eq!(
+        reopened
+            .message_totals(scope.workspace_id, "sent", vec![target])
+            .await
+            .unwrap()[&target],
+        1
+    );
+}

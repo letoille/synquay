@@ -9,6 +9,10 @@ if [ "$1" = configure ]; then
     fi
     install -d -o root -g synquay -m 0750 /etc/synquay
     install -d -o synquay -g synquay -m 0750 /var/lib/synquay
+    install -d -o synquay -g synquay -m 0750 /var/log/synquay
+    touch /var/log/synquay/synquay.log
+    chown synquay:synquay /var/log/synquay/synquay.log
+    chmod 0640 /var/log/synquay/synquay.log
     python3 /usr/share/synquay/initialize.py
     for file in tools.json security.json pipeline.json; do
         chown root:synquay "/etc/synquay/$file"

@@ -61,7 +61,32 @@ pub(super) fn registration(
         ConnectionConfig::HttpClient(config) => {
             Arc::new(HttpClientSink::new(scope, c.send_id(), config)?)
         }
-        ConnectionConfig::Mqtt(config) => Arc::new(MqttConnector::new(scope, c.send_id(), config)?),
+        ConnectionConfig::Mqtt(config) => {
+            let actions: Arc<dyn crate::application::ports::connection_actions::ConnectionActions> =
+                Arc::new(
+                    crate::infrastructure::connectors::mqtt::actions::MqttActions {
+                        scope,
+                        owner: c.id,
+                        config: config.clone(),
+                        store: commands.store.clone(),
+                    },
+                );
+            let validator = Arc::new(
+                crate::infrastructure::tool_runtime::schema::Schemas::compile(
+                    actions
+                        .definitions()
+                        .into_iter()
+                        .map(|d| d.definition.input_schema),
+                )?,
+            );
+            Arc::new(super::command_actions::ActionSink {
+                runtime: commands,
+                inner: Arc::new(MqttConnector::new(scope, c.send_id(), config)?),
+                actions,
+                scope,
+                validator,
+            })
+        }
         ConnectionConfig::QqBot(config) => {
             let sink = Arc::new(QqBotSink::new(scope, c.send_id(), config)?);
             let actions: Arc<dyn crate::application::ports::connection_actions::ConnectionActions> =
@@ -246,6 +271,7 @@ impl Pipeline {
             let _permit = permit;
             let _routing = p.routing_lane.lock().await;
             let _io = p.connection_io.write().await;
+            let _devices = p.store.device_io.write().await;
             if let Some(revision) = p
                 .store
                 .connection_operation(p.source, actor, input.clone())
@@ -357,6 +383,20 @@ impl Pipeline {
             {
                 return Err(invalid("invalid_agent_http_target"));
             }
+            if let Some(old)=&old {
+                let actions=input.connection.as_ref().map(|c|super::command_actions::definitions(&c.config)).unwrap_or_default();
+                let mut touched=false;
+                routes.routes.retain_mut(|r| {
+                    if !r.targets.iter().any(|t|t.destination_id==old.send_id()){return true}
+                    if let Some(crate::domain::managed_route::RouteProcessor::InvokeCapability{tool_id,revision,..})=&mut r.processor {
+                        if let Some(action)=actions.iter().find(|a|a.definition.id==*tool_id){
+                            if *revision!=action.revision{*revision=action.revision;r.enabled=false;touched=true;}
+                        }else{touched=true;return false}
+                    }
+                    true
+                });
+                if touched {routes.revision+=1;for r in &mut routes.routes{r.revision=routes.revision;}}
+            }
             for route in &routes.routes {
                 super::bindings::validate_routing(&next, route, p.source.connection_id)?;
             }
@@ -423,13 +463,13 @@ impl Pipeline {
                 Ok(s) => s,
                 Err(_) => break,
             };
+            if let Ok(mut statuses) = self.connection_status.write() {
+                statuses.retain(|id, _| snapshot.connections.iter().any(|c| c.id == *id));
+            }
             let desired: Vec<_> = snapshot
                 .connections
                 .iter()
-                .filter(|c| {
-                    c.enabled
-                        && matches!(&c.config,ConnectionConfig::Mqtt(m) if m.subscription.is_some())
-                })
+                .filter(|c| c.enabled && matches!(&c.config, ConnectionConfig::Mqtt(_)))
                 .collect();
             let remove: Vec<_> = sources
                 .iter()
@@ -460,6 +500,15 @@ impl Pipeline {
                 };
                 match MqttConnector::new(scope, c.send_id(), config) {
                     Ok(driver) => {
+                        if let Ok(mut statuses) = self.connection_status.write() {
+                            statuses.insert(
+                                c.id,
+                                (
+                                    serde_json::to_string(c).unwrap_or_default(),
+                                    driver.runtime_status(),
+                                ),
+                            );
+                        }
                         let token = stop.child_token();
                         let mut context = self.context(Uuid::new_v4(), token.clone()).operation;
                         context.scope = scope;
@@ -476,6 +525,21 @@ impl Pipeline {
                         );
                     }
                     Err(e) => {
+                        use crate::infrastructure::connectors::runtime_status::{
+                            ConnectionState, RuntimeStatus,
+                        };
+                        let status = RuntimeStatus::default();
+                        status.update(
+                            c.id,
+                            ConnectionState::Error,
+                            Some("mqtt_configuration_unavailable"),
+                        );
+                        if let Ok(mut statuses) = self.connection_status.write() {
+                            statuses.insert(
+                                c.id,
+                                (serde_json::to_string(c).unwrap_or_default(), status),
+                            );
+                        }
                         tracing::warn!(event="connection.start_failed",connection=%c.id,error=%e)
                     }
                 }
@@ -578,5 +642,43 @@ impl Pipeline {
         self.store
             .conversations(self.source.workspace_id, id, account, q)
             .await
+    }
+}
+
+impl Pipeline {
+    pub async fn connection_observations(
+        &self,
+        snapshot: &ConnectionSnapshot,
+    ) -> Result<serde_json::Value, PortError> {
+        let received = self
+            .store
+            .message_totals(
+                self.source.workspace_id,
+                "received",
+                snapshot.connections.iter().map(|c| c.id).collect(),
+            )
+            .await?;
+        let sent = self
+            .store
+            .message_totals(
+                self.source.workspace_id,
+                "sent",
+                snapshot.connections.iter().map(|c| c.send_id()).collect(),
+            )
+            .await?;
+        let statuses = self
+            .connection_status
+            .read()
+            .map_err(|_| PortError::Unavailable)?;
+        let observations=snapshot.connections.iter().map(|c| {
+            let status=if !c.enabled {serde_json::json!({"state":"stopped"})}
+            else {match &c.config {
+                ConnectionConfig::Mqtt(_)=>statuses.get(&c.id).filter(|(config,_)|serde_json::to_string(c).ok().as_ref()==Some(config)).map(|(_,s)|serde_json::json!(s.snapshot())).unwrap_or(serde_json::json!({"state":"connecting"})),
+                ConnectionConfig::HttpClient(_)=>serde_json::json!({"state":"on_demand"}),
+                _=>serde_json::json!({"state":"listening"}),
+            }};
+            (c.id.to_string(),serde_json::json!({"status":status,"received":received.get(&c.id).copied().unwrap_or(0),"sent":sent.get(&c.send_id()).copied().unwrap_or(0)}))
+        }).collect::<serde_json::Map<_,_>>();
+        Ok(serde_json::Value::Object(observations))
     }
 }

@@ -99,6 +99,15 @@ async fn managed_paths_filter_fanout_stop_resume_delete_and_restart_without_repl
     let id = Uuid::from_u128(6);
     let targets = vec![Uuid::from_u128(4), Uuid::from_u128(40)];
     let input = save(1, id, true, targets.clone());
+    let mut omitted = serde_json::to_value(&input).unwrap();
+    omitted["change"].as_object_mut().unwrap().remove("enabled");
+    assert!(matches!(
+        serde_json::from_value::<RouteInput>(omitted)
+            .unwrap()
+            .change,
+        RouteChange::Save { enabled: true, .. }
+    ));
+
     p.change_route(actor, input.clone()).await.unwrap();
     accept(&p, "other").await;
     p.tick(&CancellationToken::new()).await.unwrap();
@@ -106,6 +115,17 @@ async fn managed_paths_filter_fanout_stop_resume_delete_and_restart_without_repl
     accept(&p, "device.command").await;
     p.tick(&CancellationToken::new()).await.unwrap();
     assert_eq!(count.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        p.routes_view().await.unwrap().matched[&id],
+        1,
+        "fanout counts once per route"
+    );
+    p.tick(&CancellationToken::new()).await.unwrap();
+    assert_eq!(
+        p.routes_view().await.unwrap().matched[&id],
+        1,
+        "repeat dispatch cannot increment"
+    );
     assert_eq!(
         p.routes_view()
             .await
@@ -116,6 +136,28 @@ async fn managed_paths_filter_fanout_stop_resume_delete_and_restart_without_repl
             .sum::<u64>(),
         2
     );
+    // Rebuild a v18 fixture with retained history, then verify aggregate backfill.
+    drop(p);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute_batch("DROP TRIGGER count_received; DROP TRIGGER count_submitted; DROP TABLE message_totals; ALTER TABLE deliveries DROP COLUMN counted_submitted; PRAGMA user_version=18;").unwrap();
+    let p = Arc::new(
+        Pipeline::build(make_config(), TOKEN.into(), None)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(p.routes_view().await.unwrap().matched[&id], 1);
+    for (kind, expected) in [("received", 2), ("sent", 2), ("matched", 1)] {
+        let total: u64 = sql
+            .query_row(
+                "SELECT SUM(total) FROM message_totals WHERE kind=?1",
+                [kind],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, expected, "backfilled {kind}");
+    }
+    let plan: String = sql.query_row("EXPLAIN QUERY PLAN SELECT total FROM message_totals WHERE workspace='w' AND kind='matched' AND id='r'", [], |r| r.get(3)).unwrap();
+    assert!(plan.contains("PRIMARY KEY"), "{plan}");
     p.change_route(actor, save(2, id, false, targets.clone()))
         .await
         .unwrap();

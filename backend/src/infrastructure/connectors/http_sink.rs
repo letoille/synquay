@@ -155,7 +155,7 @@ impl MessageSink for HttpSink {
                 };
             let response = builder.send().await.map_err(|error| {
                 if error.is_connect() {
-                    PortError::Unavailable
+                    PortError::NotSent { retry_after: None }
                 } else {
                     PortError::OutcomeUnknown
                 }
@@ -168,16 +168,7 @@ impl MessageSink for HttpSink {
                     status: DeliveryStatus::Accepted,
                 })
             } else if status.as_u16() == 429 {
-                let delay = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(60)
-                    .min(86400);
-                Err(PortError::RateLimited {
-                    retry_after: Duration::from_secs(delay),
-                })
+                Err(super::http_retry::rate_limited(response.headers()))
             } else if status.is_server_error() || status.as_u16() == 408 {
                 Err(PortError::OutcomeUnknown)
             } else {

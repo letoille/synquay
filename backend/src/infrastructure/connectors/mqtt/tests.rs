@@ -37,6 +37,7 @@ async fn broker_send<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S, ack: bool) {
 }
 fn cfg(port: u16) -> MqttConfig {
     MqttConfig {
+        capabilities: Default::default(),
         host: "localhost".into(),
         port,
         username: None,
@@ -282,4 +283,91 @@ async fn routing_binding_overrides_default_topic_but_not_from_payload() {
         serde_json::json!({"mode":"topic","topic":"home/+/set"}),
     ));
     assert!(driver.validate(&bad.message).is_err());
+}
+
+async fn wait_state(status: &super::RuntimeStatus, expected: ConnectionState) {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while status.snapshot().state != expected {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn publish_only_monitor_reports_real_handshake_disconnect_and_stop() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut ctx = context();
+    ctx.deadline = None;
+    let stop = ctx.cancellation.clone();
+    let driver = MqttConnector::new(
+        ctx.scope,
+        Uuid::new_v4(),
+        &cfg(listener.local_addr().unwrap().port()),
+    )
+    .unwrap();
+    let status = driver.runtime_status();
+    let ingress = Arc::new(DelayedIngress {
+        started: Default::default(),
+        release: Default::default(),
+    });
+    let run = tokio::spawn(async move { driver.run(ctx, ingress).await });
+    let (mut socket, _) = listener.accept().await.unwrap();
+    assert_eq!(packet(&mut socket).await.0, 0x10);
+    assert_eq!(status.snapshot().state, ConnectionState::Connecting);
+    socket.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+    wait_state(&status, ConnectionState::Connected).await;
+    let disconnected_at = std::time::Instant::now();
+    drop(socket);
+    wait_state(&status, ConnectionState::Reconnecting).await;
+    assert_eq!(status.snapshot().code, Some("mqtt_connection_failed"));
+    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(4), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(disconnected_at.elapsed() >= Duration::from_millis(900));
+    assert_eq!(packet(&mut socket).await.0, 0x10);
+    socket.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+    wait_state(&status, ConnectionState::Connected).await;
+    drop(socket);
+    wait_state(&status, ConnectionState::Reconnecting).await;
+    stop.cancel();
+    run.await.unwrap().unwrap();
+    assert_eq!(status.snapshot().state, ConnectionState::Stopped);
+}
+
+#[tokio::test]
+async fn subscription_is_not_ready_until_broker_accepts_subscription() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut config = cfg(listener.local_addr().unwrap().port());
+    config.subscription = Some(MqttSubscription {
+        topic: "state/#".into(),
+        qos: 1,
+        event_type: "state".into(),
+        include_metadata: false,
+    });
+    let mut ctx = context();
+    ctx.deadline = None;
+    let stop = ctx.cancellation.clone();
+    let driver = MqttConnector::new(ctx.scope, Uuid::new_v4(), &config).unwrap();
+    let status = driver.runtime_status();
+    let ingress = Arc::new(DelayedIngress {
+        started: Default::default(),
+        release: Default::default(),
+    });
+    let run = tokio::spawn(async move { driver.run(ctx, ingress).await });
+    let (mut socket, _) = listener.accept().await.unwrap();
+    packet(&mut socket).await;
+    socket.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+    let (_, sub) = packet(&mut socket).await;
+    assert_eq!(status.snapshot().state, ConnectionState::Subscribing);
+    socket
+        .write_all(&[0x90, 3, sub[0], sub[1], 0x80])
+        .await
+        .unwrap();
+    wait_state(&status, ConnectionState::Reconnecting).await;
+    assert_eq!(status.snapshot().code, Some("mqtt_subscription_rejected"));
+    stop.cancel();
+    run.await.unwrap().unwrap();
 }

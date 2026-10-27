@@ -30,6 +30,9 @@ pub enum PortError {
     PayloadTooLarge,
     #[error("temporarily unavailable")]
     Unavailable,
+    /// Adapter guarantees the business request was not sent. Safe to retry delivery.
+    #[error("message not sent; connection unavailable")]
+    NotSent { retry_after: Option<Duration> },
     #[error("external side effect has an unknown outcome")]
     OutcomeUnknown,
     #[error("adapter failed: {code}")]

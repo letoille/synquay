@@ -224,16 +224,16 @@ async fn management_is_separately_authorized_and_recovery_is_reviewable() {
     };
     use tower::ServiceExt;
     let dir = tempfile::tempdir().unwrap();
+    // A connected peer returning 503 has an uncertain side effect. Connection
+    // refusal now correctly remains retryable and is not a recovery case yet.
+    let (url, stop, server) =
+        serve(Router::new().route("/", post(|| async { StatusCode::SERVICE_UNAVAILABLE }))).await;
     let p = Arc::new(
-        Pipeline::build(
-            config(&dir.path().join("a.db"), "http://127.0.0.1:9"),
-            TOKEN.into(),
-            None,
-        )
-        .await
-        .unwrap()
-        .with_management(Uuid::from_u128(90), ADMIN.into())
-        .unwrap(),
+        Pipeline::build(config(&dir.path().join("a.db"), &url), TOKEN.into(), None)
+            .await
+            .unwrap()
+            .with_management(Uuid::from_u128(90), ADMIN.into())
+            .unwrap(),
     );
     p.accept(Uuid::new_v4(), input("1")).await.unwrap();
     p.tick(&CancellationToken::new()).await.unwrap();
@@ -259,6 +259,7 @@ async fn management_is_separately_authorized_and_recovery_is_reviewable() {
     assert!(!text.contains(ADMIN));
     let v: Value = serde_json::from_str(&text).unwrap();
     let case = &v["database"]["recovery_cases"][0];
+    assert_eq!(case["state"], "reconcile");
     let cmd = json!({"command_id":Uuid::new_v4(),"target":{"kind":"delivery","delivery_id":case["delivery_id"]},"expected_state":case["state"],"expected_revision":case["revision"],"action":"abandon","reason":"operator abandons uncertain work"});
     let request = |token: &str| {
         Request::post("/api/ops/recover")
@@ -298,4 +299,77 @@ async fn management_is_separately_authorized_and_recovery_is_reviewable() {
     assert_eq!(detail["recovery_history"].as_array().unwrap().len(), 1);
     assert_eq!(detail["attempts"].as_array().unwrap().len(), 1);
     assert!(p.operations(Uuid::new_v4()).await.is_err());
+    stop.cancel();
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_backoff_applies_to_the_target_without_blocking_other_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    let times = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let seen = times.clone();
+    let (slow, slow_stop, slow_task) = serve(Router::new().route(
+        "/",
+        post(move || {
+            let seen = seen.clone();
+            async move {
+                let mut calls = seen.lock().await;
+                calls.push(Instant::now());
+                if calls.len() == 1 {
+                    (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "2")])
+                } else {
+                    (StatusCode::OK, [("retry-after", "0")])
+                }
+            }
+        }),
+    ))
+    .await;
+    let fast_count = Arc::new(AtomicUsize::new(0));
+    let count = fast_count.clone();
+    let (fast, fast_stop, fast_task) = serve(Router::new().route(
+        "/",
+        post(move || {
+            let count = count.clone();
+            async move {
+                count.fetch_add(1, Ordering::SeqCst);
+                StatusCode::OK
+            }
+        }),
+    ))
+    .await;
+    let mut cfg = config(&dir.path().join("limits.db"), &slow);
+    cfg.additional_targets.push(extra(&fast));
+    cfg.scheduler.min_interval_ms = 0;
+    let p = Pipeline::build(cfg, TOKEN.into(), None).await.unwrap();
+    for id in ["1", "2"] {
+        p.accept(Uuid::new_v4(), input(id)).await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(1), p.tick(&CancellationToken::new()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(times.lock().await.len(), 1);
+    assert_eq!(fast_count.load(Ordering::SeqCst), 2);
+    p.tick(&CancellationToken::new()).await.unwrap();
+    assert_eq!(
+        times.lock().await.len(),
+        1,
+        "new messages cannot bypass target backoff"
+    );
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while times.lock().await.len() < 3 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            p.tick(&CancellationToken::new()).await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let calls = times.lock().await;
+    assert!(calls[1].duration_since(calls[0]) >= Duration::from_millis(1900));
+    assert_eq!(calls.len(), 3);
+    drop(calls);
+    slow_stop.cancel();
+    fast_stop.cancel();
+    slow_task.await.unwrap();
+    fast_task.await.unwrap();
 }

@@ -58,6 +58,10 @@ fn field(
             }
             return Some(("config.allowed_senders", "invalid_qq_members"));
         }
+        "invalid_mqtt_capabilities" | "unsupported_schema" | "invalid_schema" => {
+            "config.capabilities"
+        }
+        "resource_topic_not_subscribed" => "config.subscription.topic",
         "invalid_http_url" => "config.url",
         "invalid_http_method" => "config.method",
         "invalid_http_username" => "config.auth.username",

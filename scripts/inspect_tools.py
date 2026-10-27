@@ -11,7 +11,7 @@ args = parser.parse_args()
 c = sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True)
 c.row_factory = sqlite3.Row
 try:
-    if c.execute("PRAGMA user_version").fetchone()[0] not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18):
+    if c.execute("PRAGMA user_version").fetchone()[0] not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
         parser.error("Expected schema v5 through v18")
     c.execute("BEGIN")
     heads = [dict(r) for r in c.execute("SELECT workspace,profile,revision FROM tool_heads")]

@@ -35,6 +35,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub struct Pipeline {
+    connection_status: std::sync::RwLock<
+        std::collections::HashMap<Uuid, (String, super::connectors::runtime_status::RuntimeStatus)>,
+    >,
     pub connection_io: Arc<tokio::sync::RwLock<()>>,
     connections: Arc<std::sync::RwLock<message_connections::ConnectionSnapshot>>,
     registry: Arc<ConnectorRegistry>,
@@ -364,6 +367,7 @@ impl Pipeline {
         }
         let registry = Arc::new(registry);
         Ok(Self {
+            connection_status: Default::default(),
             connection_io: Arc::new(tokio::sync::RwLock::new(())),
             commands,
             connections,
@@ -527,6 +531,8 @@ impl Pipeline {
         let started = Instant::now();
         let mut operation = self.context(request_id, CancellationToken::new()).operation;
         operation.scope.connection_id = connection;
+        let event_type = event.event_type.clone();
+        tracing::debug!(event="message.receive_started",connection_id=%connection,request_id=%request_id,event_type=%event_type,"Receiving message");
         let result = ingress.accept(operation, event).await;
         use crate::domain::event::IngestDisposition;
         use std::sync::atomic::Ordering;
@@ -536,6 +542,11 @@ impl Pipeline {
             .observe(started.elapsed().as_micros() as u64);
         match &result {
             Ok(r) => {
+                let disposition = match r.disposition {
+                    IngestDisposition::Stored => "stored",
+                    IngestDisposition::Duplicate => "duplicate",
+                };
+                tracing::info!(event="message.received",workspace_id=%self.source.workspace_id,connection_id=%connection,request_id=%request_id,event_id=%r.event_id,event_type=%event_type,disposition,elapsed_ms=started.elapsed().as_millis() as u64,"Message accepted");
                 match r.disposition {
                     IngestDisposition::Stored => &self.store.metrics.stored,
                     IngestDisposition::Duplicate => &self.store.metrics.duplicates,
@@ -550,6 +561,9 @@ impl Pipeline {
                     .fetch_add(1, Ordering::Relaxed);
             }
             _ => {}
+        }
+        if let Err(error) = &result {
+            tracing::warn!(event="message.receive_failed",connection_id=%connection,request_id=%request_id,error=%error,elapsed_ms=started.elapsed().as_millis() as u64,"Message not accepted");
         }
         result
     }
@@ -653,6 +667,11 @@ impl Pipeline {
                 }
                 s.next_start.saturating_duration_since(Instant::now())
             };
+            // Long backoff yields to the supervisor; do not keep a tick or lane
+            // occupied until a provider's potentially hours-long Retry-After expires.
+            if delay > Duration::from_millis(self.scheduler.min_interval_ms) {
+                return Ok(());
+            }
             tokio::select! {biased;_=stop.cancelled()=>return Ok(()),_=tokio::time::sleep(delay)=>{}}
             let _slot = tokio::select! {biased;_=stop.cancelled()=>return Ok(()),p=self.delivery_slots.acquire()=>p.map_err(|_|PortError::Unavailable)?};
             let started = Instant::now();
@@ -700,7 +719,14 @@ impl Pipeline {
             tracing::info!(event="pipeline.delivery_processed",target_id=%lane.id,delivery_id=%report.delivery_id,outcome,state_recorded=report.state_recorded,audit_recorded=report.audit_recorded);
             let mut s = lane.state.lock().await;
             s.starts += 1;
-            s.next_start = Instant::now() + Duration::from_millis(self.scheduler.min_interval_ms);
+            // Respect a rejected attempt's delay across the whole destination, so the
+            // remaining queue cannot hammer an unavailable or rate-limited service.
+            let wait = match &report.outcome {
+                DeliveryOutcome::Deferred(d) | DeliveryOutcome::RetryAfter(d) => *d,
+                _ => Duration::ZERO,
+            };
+            s.next_start =
+                Instant::now() + wait.max(Duration::from_millis(self.scheduler.min_interval_ms));
             s.complete(success, &self.scheduler);
             drop(s);
             if !report.state_recorded || !report.audit_recorded {

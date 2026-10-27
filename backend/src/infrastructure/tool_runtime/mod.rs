@@ -3,6 +3,7 @@
 pub mod config;
 pub mod connections;
 mod control;
+mod devices;
 pub mod endpoint_auth;
 mod http;
 pub mod oauth;
@@ -37,6 +38,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::Semaphore;
 
 pub struct ToolRuntime {
+    device_scopes: std::sync::Mutex<std::collections::HashSet<ConnectionScope>>,
     endpoint_auth_cache: std::sync::Mutex<
         std::collections::HashMap<uuid::Uuid, (u64, Arc<endpoint_auth::PreparedAuth>)>,
     >,
@@ -137,6 +139,13 @@ impl PolicyEngine for ToolPolicy {
                 }
                 _ => None,
             };
+            let device_tool = if let Resource::Tool { scope, tool_id } = &resource {
+                self.store.device_connection(*scope).await.ok().filter(|c|c.enabled).and_then(|c| {
+                    if let crate::infrastructure::connectors::message_config::ConnectionConfig::Mqtt(m)=c.config {m.capabilities.definitions().into_iter().find(|d|&d.id==tool_id).map(|_|devices::public_name(c.id,tool_id))}else{None}
+                })
+            } else {
+                None
+            };
             let c = self.config.read().map_err(|_| PortError::Unavailable)?;
             let content_scope = content_server
                 .as_ref()
@@ -189,11 +198,14 @@ impl PolicyEngine for ToolPolicy {
                 ) => workspace_id == c.workspace_id && active_profile && !profile_id.is_nil(),
                 (Action::InvokeTool, Resource::Tool { scope, tool_id }) => {
                     scope.workspace_id == c.workspace_id
-                        && c.tools.iter().any(|t| {
-                            grant.is_none_or(|g| g.tools.contains(&t.public_name))
-                                && t.connection_id == scope.connection_id
-                                && t.definition.id == tool_id
-                        })
+                        && (device_tool
+                            .as_ref()
+                            .is_some_and(|name| grant.is_none_or(|g| g.tools.contains(name)))
+                            || c.tools.iter().any(|t| {
+                                grant.is_none_or(|g| g.tools.contains(&t.public_name))
+                                    && t.connection_id == scope.connection_id
+                                    && t.definition.id == tool_id
+                            }))
                 }
                 (
                     Action::ReadMcpResource,
@@ -404,7 +416,26 @@ impl ToolRuntime {
                 }
             }
         }
-        security.validate(&security_inventory)?;
+        let extra_tools = store
+            .device_connections(config.workspace_id)
+            .await?
+            .into_iter()
+            .flat_map(|c| {
+                if let crate::infrastructure::connectors::message_config::ConnectionConfig::Mqtt(
+                    m,
+                ) = c.config
+                {
+                    m.capabilities
+                        .definitions()
+                        .into_iter()
+                        .map(|d| devices::public_name(c.id, &d.id))
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
+                }
+            })
+            .collect();
+        security.validate_with_tools(&security_inventory, &extra_tools)?;
         let oauth = security
             .oauth
             .clone()
@@ -495,8 +526,16 @@ impl ToolRuntime {
                 control::adopt_snapshot(&mut config, &record)?;
             }
         }
+        let startup_profile = if let Some(record) = store
+            .tools_snapshot(config.workspace_id, config.profile_id)
+            .await?
+        {
+            devices::preserve_devices(config.profile(), &record)?
+        } else {
+            config.profile()
+        };
         store
-            .publish_tools(config.profile(), config.snapshot(), config.principal_id)
+            .publish_tools(startup_profile, config.snapshot(), config.principal_id)
             .await?;
         let owner = security
             .admin
@@ -613,7 +652,8 @@ impl ToolRuntime {
             ToolService::new(store.clone(), schemas.clone(), registry.clone(), governance)
                 .with_ledger(store.clone())
                 .with_publication_gate(publication_gate.clone());
-        Ok(Arc::new(Self {
+        let runtime = Arc::new(Self {
+            device_scopes: Default::default(),
             agent,
             content,
             service,
@@ -634,7 +674,9 @@ impl ToolRuntime {
             requests: Arc::new(Semaphore::new(32)),
             control_requests: Arc::new(Semaphore::new(4)),
             _lease: lease,
-        }))
+        });
+        runtime.refresh_device_tools().await?;
+        Ok(runtime)
     }
     fn authenticate_static(&self, bearer: &str) -> bool {
         // Hash first to make timing independent of secret length.

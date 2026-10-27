@@ -48,6 +48,7 @@ pub enum RouteChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         routing: Option<Box<super::connection_routing::ConnectionRouting>>,
         name: String,
+        #[serde(default = "enabled_by_default")]
         enabled: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_id: Option<Uuid>,
@@ -104,4 +105,8 @@ fn command_change<'de, D: serde::Deserializer<'de>>(
 pub enum RouteResponse {
     None,
     Source,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }

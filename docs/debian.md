@@ -14,9 +14,11 @@
 | `/etc/synquay/pipeline.json` | 消息管线初始化配置 |
 | `/etc/synquay/credentials.env` | 首次安装生成的独立随机凭据，root 0600 |
 | `/var/lib/synquay/` | 数据库、连接密钥加密主密钥和运行数据 |
+| `/var/log/synquay/` | 应用日志与轮转归档 |
+| `/etc/logrotate.d/synquay` | 日志轮转规则，dpkg conffile |
 | `/usr/share/synquay/config/` | 随版本更新的配置模板 |
 
-服务名为 `synquay`，以专用 `synquay` 用户运行，日志写入 journal。默认监听 `127.0.0.1:8080`，管理台和 API 同源，不需要单独启动前端开发服务器。
+服务名为 `synquay`，以专用 `synquay` 用户运行，应用日志写入 `/var/log/synquay/synquay.log`；服务启停和 systemd 错误仍由 journal 记录。默认监听 `127.0.0.1:8080`，管理台和 API 同源，不需要单独启动前端开发服务器。
 
 首次安装生成配置与凭据。默认没有工具、消息连接或自动转发路由；`bootstrap_routes: false` 只影响空数据库的首次初始化，不会覆盖已有路由。管线配置中保留的基础 Webhook/HTTP 端点用于兼容现有运行模型，HTTP 地址是不可用的占位地址，没有路由会向它发送消息。请在管理台创建实际连接和路由。
 
@@ -48,7 +50,7 @@ Docker 按宿主机架构构建，Apple Silicon 得到 arm64 包；需要 amd64 
 sha256sum --check SHA256SUMS
 sudo apt install ./synquay_*.deb
 systemctl status synquay
-journalctl -u synquay -f
+sudo tail -F /var/log/synquay/synquay.log
 ```
 
 安装会启用并启动服务。可通过 SSH 转发访问服务器上的管理台：
@@ -60,6 +62,29 @@ ssh -L 8080:127.0.0.1:8080 user@server
 然后打开 `http://127.0.0.1:8080/`。修改 `/etc/synquay` 中的配置后运行 `sudo systemctl restart synquay`。
 
 管理台尚无登录鉴权，不应直接公开整个监听端口。接入 QQ 时，由 HTTPS 反向代理仅转发 `/api/qq/<连接ID>/webhook` 到 `127.0.0.1:8080`，将公网地址填入 QQ 开放平台。MCP 公网路径应按各服务认证配置单独开放。
+
+## 日志与归档
+
+安装包通过 systemd 将应用 stdout/stderr 追加到 `/var/log/synquay/synquay.log`，默认 JSON 格式。目录权限 `0750`、当前文件 `0640`，归属 `synquay:synquay`；重复安装和服务重启不会清空日志。开发时直接运行程序仍输出到 stderr。
+
+```bash
+sudo tail -F /var/log/synquay/synquay.log
+sudo ls -lh /var/log/synquay/
+sudo zcat /var/log/synquay/synquay.log.2.gz
+# 服务启停或程序尚未启动的错误
+sudo journalctl -u synquay -n 100 --no-pager
+```
+
+默认由系统 logrotate 的 timer/cron 调度：每天轮转非空日志，保留 14 份归档，最近一份为 `.1`，更早的为 `.2.gz` 至 `.14.gz`。检查时若超过 50 MiB，也会提前轮转；这个阈值只在 logrotate 执行时检查，不是实时磁盘上限。可在 `/etc/logrotate.d/synquay` 调整策略；修改不需要重启应用，升级按 conffile 规则保留。
+
+```bash
+systemctl status logrotate.timer
+sudo logrotate --debug /etc/logrotate.d/synquay
+```
+
+文件由 systemd 持有，使用 `copytruncate` 保持写入句柄有效，轮转无需重启服务。复制与截断之间有短暂窗口，极少量并发日志可能丢失，不能将这些运行日志视为无损审计归档；业务审计仍在数据库中。详见 [logrotate 文档](https://github.com/logrotate/logrotate/blob/main/logrotate.8.in)。
+
+升级后新日志进入文件，历史 journal 不会自动迁移。卸载与 purge 保留 `/var/log/synquay`；purge 会移除包管理的轮转配置，保留日志需自行管理。此次配置修改在安装新版 deb 后生效。
 
 ## Nginx 80 端口配置
 
@@ -74,6 +99,8 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 
 启用前确认 DNS 指向服务器、80 端口可访问且 Synquay 已启动。已有同名配置或符号链接时先检查，不重复覆盖。配置使用的 [反向代理指令](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) 保留原始 URI、Host 与请求的认证头。
+
+使用 `8443` 等非标准公网端口时，代理必须使用 `proxy_set_header Host $http_host;` 保留浏览器请求中的端口；`$host` 会丢掉端口，使后端收到的 Host 与浏览器 Origin 不一致，保存时返回 `origin_denied`。如果已经用 Certbot 生成 HTTPS 配置，也需要修改实际处理 HTTPS 请求的 `location`，然后执行 `sudo nginx -t && sudo systemctl reload nginx`。无需修改后端的来源校验。
 
 此示例会代理整个管理台，当前管理台没有登录认证；对公网使用时需另外限制管理台和管理 API 的访问。HTTPS 本身不提供管理权限控制。前端 API 请求使用 `credentials: 'omit'`，因此不能直接依赖浏览器自动附带的 Nginx Basic Auth 凭据。
 
@@ -108,6 +135,6 @@ sudo apt -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confol
 - 当前 CI 使用 Ubuntu 22.04 原生 amd64，面向 Ubuntu 22.04+ / Debian 12+；动态库最低版本由 `$auto` 依赖分析写入包，不假定可安装到更老发行版。
 - Rust 缓存只在默认分支写入；建议第一次在默认分支手动构建，后续标签构建可复用缓存。
 
-CI 检查 Rust 格式、Clippy、测试、初始化幂等性、前端测试与构建、真实包内容，再在独立 runner 安装、重装、卸载、purge，验证服务用户、HTTP 可用性与配置/数据保留。`scripts/test-deb.sh` 仅供隔离测试环境，检测到既有安装时拒绝运行。
+CI 检查 Rust 格式、Clippy、测试、初始化幂等性、前端测试与构建、真实包内容，再在独立 runner 安装、重装、卸载、purge，验证服务用户、HTTP 可用性、日志写入/轮转/压缩以及配置/数据保留。`scripts/test-deb.sh` 仅供隔离测试环境，检测到既有安装时拒绝运行。
 
 配置工作流不会自动创建 GitHub 仓库或推送代码，需要把项目提交到 GitHub 后才能触发。

@@ -77,6 +77,7 @@ impl SqliteStore {
         }else {
             tx.execute("DELETE FROM connection_conversations WHERE workspace=?1 AND connection=?2",params![ws,input.connection_id.to_string()]).map_err(db_error)?;
         }
+        super::device_state::configure(&tx,scope.workspace_id,input.connection_id,input.connection.as_ref())?;
         let request=connection_secrets::request_record(&tx,&path,&input)?;
         if let Some(crate::infrastructure::connectors::message_config::ConnectionConfig::QqBot(_))=input.connection.as_ref().map(|c|&c.config) {
             if let Some(value)=input.secret.as_ref().filter(|v|!v.is_empty()) {

@@ -336,7 +336,7 @@ async fn migration_backfills_only_unfinished_work_and_preserves_dispatches() {
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        18
+        20
     );
 }
 

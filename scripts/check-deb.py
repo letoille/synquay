@@ -17,6 +17,10 @@ with tempfile.TemporaryDirectory() as temp:
     units = list(root.glob("**/systemd/system/synquay.service"))
     assert len(units) == 1
     assert "User=synquay" in units[0].read_text()
+    assert "StandardOutput=append:/var/log/synquay/synquay.log" in units[0].read_text()
+    assert "LogsDirectory=synquay" in units[0].read_text()
+    assert (root / "etc/logrotate.d/synquay").is_file()
+    assert "/etc/logrotate.d/synquay" in (root / "DEBIAN/conffiles").read_text()
     binary = (root / "usr/bin/synquay-server").read_bytes()
     assert binary[:4] == b"\x7fELF", "Not a Linux ELF binary"
     assert (root / "usr/bin/synquay-server").stat().st_mode & 0o111

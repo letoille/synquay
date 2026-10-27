@@ -5,9 +5,9 @@ QQ Bot 是双向消息连接，当前支持官方 Webhook、群和 C2C 单聊文
 ## 配置
 
 1. 管理台直接填写 QQ 开放平台的 AppSecret。保存后只显示「已配置」，不提供查看入口；编辑时留空保留原密钥，填写新值替换。更换 AppID 必须重新填写密钥。QQ 不再使用环境变量引用。
-2. 管理台「连接 → 添加连接 → QQ Bot」填写 AppID、密钥变量名；限定群可以留空。群 OpenID 是群消息事件 `d.group_openid`，不是 QQ 群号；成员 OpenID 是 `d.author.member_openid`。
+2. 管理台「连接 → 添加连接 → QQ Bot」填写 AppID、密钥；限定群可以留空。群 OpenID 是群消息事件 `d.group_openid`，不是 QQ 群号；成员 OpenID 是 `d.author.member_openid`。
 3. 「允许的成员」为空时接收所有符合连接范围的用户；填写后仅接收列出的成员。给设备控制指令使用的连接应限定成员。平台签名只证明来源是 QQ，不代表群内每个人都有设备操作权限。
-4. 保存并启用连接，复制 `/api/qq/{connection_id}/webhook` 地址，使用部署的 HTTPS 域名。localhost 地址只能本地验证，不能填到 QQ 公网回调配置。
+4. 新连接保存后默认启用，复制 `/api/qq/{connection_id}/webhook` 地址，使用部署的 HTTPS 域名。localhost 地址只能本地验证，不能填到 QQ 公网回调配置。
 5. 在 QQ 开放平台配置该 HTTPS 回调地址，订阅 `GROUP_AT_MESSAGE_CREATE`，单聊订阅 `C2C_MESSAGE_CREATE`。如果需要全量群消息，还需群主授权接收范围并订阅 `GROUP_MESSAGE_CREATE`。
 6. 到「路由」选择此 QQ 连接为入口，目标选 HTTP / MQTT / QQ，或者选择 Agent（HTTP 接收端）。配置指令时，消息字段使用 `/content`。
 

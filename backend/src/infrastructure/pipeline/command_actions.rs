@@ -76,6 +76,7 @@ impl CommandJob {
 }
 pub(super) fn definitions(config: &ConnectionConfig) -> Vec<ConnectionAction> {
     match config {
+        ConnectionConfig::Mqtt(c) => crate::infrastructure::connectors::mqtt::actions::catalog(c),
         ConnectionConfig::QqBot(_) => crate::infrastructure::connectors::qq::actions::catalog(),
         _ => vec![],
     }
@@ -154,8 +155,8 @@ pub(super) fn validate(
     {
         return Err(invalid("route_target_selection_required"));
     }
-    if r.response == Some(RouteResponse::Source) && source.id != target.id {
-        return Err(invalid("command_reply_requires_same_connection"));
+    if r.response == Some(RouteResponse::Source) && !adapter(&source.config).supports_reply() {
+        return Err(invalid("route_reply_unavailable"));
     }
     Ok(())
 }

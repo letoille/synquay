@@ -351,7 +351,7 @@ async fn schema_upgrade_rolls_back_and_queue_queries_use_indexes() {
     let store = SqliteStore::open(&path).await.unwrap();
     drop(store);
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch("DROP TABLE connection_secrets; DROP TABLE connection_conversations; DROP INDEX routing_unresolved_source; DROP TABLE message_connection_operations; DROP TABLE message_connections; DROP TABLE managed_routes; DROP TABLE route_operations; DROP INDEX deliveries_by_route_state; ALTER TABLE deliveries DROP COLUMN route_rule_id; DROP TABLE tool_connection_changes; DROP TABLE tool_connection_overrides; DROP TABLE mcp_server_changes; DROP TABLE mcp_servers; DROP TABLE agent_claims; DROP TABLE agent_jobs; PRAGMA user_version=10;")
+    c.execute_batch("DROP TRIGGER count_received; DROP TRIGGER count_submitted; DROP TABLE message_totals; ALTER TABLE deliveries DROP COLUMN counted_submitted; DROP TABLE connection_secrets; DROP TABLE connection_conversations; DROP INDEX routing_unresolved_source; DROP TABLE message_connection_operations; DROP TABLE message_connections; DROP TABLE managed_routes; DROP TABLE route_operations; DROP INDEX deliveries_by_route_state; ALTER TABLE deliveries DROP COLUMN route_rule_id; DROP TABLE tool_connection_changes; DROP TABLE tool_connection_overrides; DROP TABLE mcp_server_changes; DROP TABLE mcp_servers; DROP TABLE agent_claims; DROP TABLE agent_jobs; PRAGMA user_version=10;")
         .unwrap();
     assert!(SqliteStore::open(&path).await.is_err());
     assert_eq!(

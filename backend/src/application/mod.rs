@@ -2,5 +2,6 @@
 pub mod connectors;
 pub mod modules;
 pub mod ports;
+pub mod retry;
 pub mod services;
 pub mod system;

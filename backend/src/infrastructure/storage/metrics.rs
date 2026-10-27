@@ -67,3 +67,20 @@ impl SqliteStore {
   }).await
     }
 }
+
+impl SqliteStore {
+    pub async fn message_totals(
+        &self,
+        workspace: Uuid,
+        kind: &'static str,
+        ids: Vec<Uuid>,
+    ) -> Result<std::collections::BTreeMap<Uuid, u64>, PortError> {
+        self.run(move |c| {
+            let mut query=c.prepare("SELECT id,total FROM message_totals WHERE workspace=?1 AND kind=?2 AND id IN (SELECT value FROM json_each(?3))").map_err(db_error)?;
+            query.query_map(rusqlite::params![workspace.to_string(),kind,super::encode(&ids)?],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?))).map_err(db_error)?.map(|r| {
+                let (id,total)=r.map_err(db_error)?;
+                Ok((Uuid::parse_str(&id).map_err(|_|PortError::Unavailable)?,total))
+            }).collect()
+        }).await
+    }
+}

@@ -406,3 +406,31 @@ test('generated endpoints follow the browser site protocol, host and port',async
   }
  } finally {if(prior)Object.defineProperty(globalThis,'window',prior);else Reflect.deleteProperty(globalThis,'window');}
 });
+
+test('live connection observations distinguish enabled from connected and validate counters',async()=>{
+ const {parseObservations,connectionState}=await import('../src/features/message-connections/observations.ts');
+ const {defaults}=await import('../src/features/message-connections/api.ts');
+ const c={id:'mqtt',name:'Broker',description:'',enabled:true,config:defaults('mqtt')};
+ assert.equal(connectionState(c),'状态未知');
+ const observation={status:{state:'reconnecting',code:'mqtt_connection_failed'},received:10,sent:4};
+ assert.equal(connectionState(c,observation),'重连中');
+ assert.equal(connectionState({...c,enabled:false},observation),'已停止');
+ assert.deepEqual(parseObservations({mqtt:observation}),{mqtt:observation});
+ assert.equal(parseObservations(undefined),undefined);
+ assert.throws(()=>parseObservations({mqtt:{...observation,received:-1}}));
+ assert.throws(()=>parseObservations({mqtt:{...observation,status:{state:'healthy'}}}));
+});
+
+test('MQTT switch example keeps multiple state groups and validates tool identifiers', async () => {
+ const {switchExample,capabilityErrors}=await import('../src/features/message-connections/capabilities.ts');
+ const example=switchExample('home/switch/sub','home/switch/pub');
+ assert.deepEqual(capabilityErrors(example),{});
+ assert.deepEqual(example.resources[0].groups.map(g=>g.id),['basic','power']);
+ assert.equal(example.resources[0].groups[0].max_age_ms,0);
+ assert.equal(example.resources[0].groups[1].refresh_tool,'query_power');
+ assert.equal(example.tools[0].payload.messageId.source,'invocation_id');
+ example.tools[1].id=example.tools[0].id;
+ assert.ok(capabilityErrors(example)['config.capabilities.tools.1.id']);
+ example.resources[0].groups[1].fields[0].pointer='key';
+ assert.ok(capabilityErrors(example)['config.capabilities.resources.0.groups.1.fields']);
+});

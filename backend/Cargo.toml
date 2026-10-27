@@ -13,6 +13,7 @@ jsonschema = { version = "0.46", default-features = false }
 url = "2.5"
 ring = "0.17.14"
 futures-util = "0.3"
+httpdate = "1"
 axum.workspace = true
 serde.workspace = true
 tokio.workspace = true
@@ -52,7 +53,7 @@ copyright = "2026, Synquay contributors"
 section = "net"
 priority = "optional"
 extended-description = "Application and message gateway with an MCP server, durable routing and a bundled React management console."
-depends = "$auto, adduser, python3, ca-certificates, init-system-helpers (>= 1.54~)"
+depends = "$auto, adduser, python3, ca-certificates, logrotate, init-system-helpers (>= 1.54~)"
 assets = [
   ["target/release/synquay-server", "usr/bin/synquay-server", "755"],
   ["web-dist/**/*", "usr/share/synquay/web/", "644"],
@@ -60,8 +61,9 @@ assets = [
   ["deploy/initialize.py", "usr/share/synquay/initialize.py", "644"],
   ["deploy/synquay.env", "etc/synquay/synquay.env", "644"],
   ["deploy/synquay.env", "usr/share/synquay/synquay.env.example", "644"],
+  ["deploy/logrotate/synquay", "etc/logrotate.d/synquay", "644"],
 ]
-conf-files = ["/etc/synquay/synquay.env"]
+conf-files = ["/etc/synquay/synquay.env", "/etc/logrotate.d/synquay"]
 maintainer-scripts = "deploy/scripts"
 
 [package.metadata.deb.systemd-units]

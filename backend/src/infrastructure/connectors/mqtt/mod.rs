@@ -1,5 +1,9 @@
 //! MQTT 3.1.1, bounded packets, manual inbound PUBACK and explicit outbound acceptance.
-use super::{http_client::body, message_config::*};
+use super::{
+    http_client::body,
+    message_config::*,
+    runtime_status::{ConnectionState, RuntimeStatus},
+};
 use crate::{
     application::ports::{
         OperationContext, PortError, PortFuture,
@@ -16,13 +20,19 @@ use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, TlsConfiguration, Tr
 use std::{sync::Arc, time::Duration};
 use uuid::Uuid;
 
+pub mod actions;
+
 pub struct MqttConnector {
+    status: RuntimeStatus,
     options: MqttOptions,
     config: MqttConfig,
     scope: ConnectionScope,
     destination: Uuid,
 }
 impl MqttConnector {
+    pub fn runtime_status(&self) -> RuntimeStatus {
+        self.status.clone()
+    }
     pub fn new(
         scope: ConnectionScope,
         destination: Uuid,
@@ -102,6 +112,7 @@ impl MqttConnector {
             )));
         }
         Ok(Self {
+            status: RuntimeStatus::default(),
             options,
             config: c.clone(),
             scope,
@@ -146,11 +157,20 @@ impl MessageSink for MqttConnector {
             {
                 Ok(Ok(Event::Incoming(Packet::ConnAck(a))))
                     if a.code == rumqttc::ConnectReturnCode::Success => {}
-                _ => return Err(PortError::Unavailable),
+                Ok(Err(rumqttc::ConnectionError::ConnectionRefused(
+                    rumqttc::ConnectReturnCode::BadUserNamePassword
+                    | rumqttc::ConnectReturnCode::NotAuthorized,
+                ))) => return Err(PortError::PermissionDenied),
+                Ok(Err(rumqttc::ConnectionError::Tls(_))) => {
+                    return Err(PortError::Failed {
+                        code: "mqtt_tls_failed",
+                    });
+                }
+                _ => return Err(PortError::NotSent { retry_after: None }),
             }
             client
                 .try_publish(topic, qos(p.qos), p.retain, bytes)
-                .map_err(|_| PortError::Unavailable)?;
+                .map_err(|_| PortError::NotSent { retry_after: None })?;
             let attempt = async {
                 loop {
                     match events.poll().await {
@@ -183,27 +203,48 @@ impl EventSource for MqttConnector {
             if ctx.scope != self.scope {
                 return Err(PortError::ScopeMismatch);
             }
-            let s = self
-                .config
-                .subscription
-                .as_ref()
-                .ok_or(PortError::Unsupported)?;
+            let _running = self.status.running(self.scope.connection_id);
+            let s = self.config.subscription.as_ref();
             let mut options = self.options.clone();
-            options.set_clean_session(false);
-            let mut delay = 1;
+            options.set_clean_session(s.is_none());
+            let mut backoff = crate::application::retry::ReconnectBackoff::default();
             loop {
                 if ctx.cancellation.is_cancelled() {
                     return Ok(SourceExit::Cancelled);
                 }
                 let (client, mut events) = AsyncClient::new(options.clone(), 8);
+                let mut ready_since: Option<std::time::Instant> = None;
+                let mut configuration_error = false;
                 events.network_options.set_connection_timeout(5);
                 loop {
                     let event = tokio::select! {biased;_=ctx.cancellation.cancelled()=>return Ok(SourceExit::Cancelled),e=events.poll()=>e};
                     match event {
-                        Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                            client
-                                .try_subscribe(&s.topic, qos(s.qos))
-                                .map_err(|_| PortError::Unavailable)?;
+                        Ok(Event::Incoming(Packet::ConnAck(ack))) => {
+                            if ack.code != rumqttc::ConnectReturnCode::Success {
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Reconnecting,
+                                    Some("mqtt_connection_rejected"),
+                                );
+                                break;
+                            }
+                            if let Some(s) = s {
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Subscribing,
+                                    None,
+                                );
+                                client
+                                    .try_subscribe(&s.topic, qos(s.qos))
+                                    .map_err(|_| PortError::Unavailable)?;
+                            } else {
+                                ready_since = Some(std::time::Instant::now());
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Connected,
+                                    None,
+                                );
+                            }
                         }
                         Ok(Event::Incoming(Packet::SubAck(ack))) => {
                             if ack
@@ -211,13 +252,31 @@ impl EventSource for MqttConnector {
                                 .iter()
                                 .any(|q| matches!(q, rumqttc::SubscribeReasonCode::Failure))
                             {
-                                tracing::warn!(event="mqtt.subscription_rejected",connection=%self.scope.connection_id);
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Reconnecting,
+                                    Some("mqtt_subscription_rejected"),
+                                );
+                                tracing::warn!(event="mqtt.subscription_rejected",connection_id=%self.scope.connection_id);
                                 break;
                             }
-                            delay = 1;
+                            ready_since = Some(std::time::Instant::now());
+                            self.status.update(
+                                self.scope.connection_id,
+                                ConnectionState::Connected,
+                                None,
+                            );
                         }
                         Ok(Event::Incoming(Packet::Publish(p))) => {
+                            let Some(s) = s else {
+                                continue;
+                            };
                             if p.payload.len() > 65536 {
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Reconnecting,
+                                    Some("mqtt_payload_too_large"),
+                                );
                                 break;
                             }
                             // JSON is preserved; binary input is explicitly encoded, never lossy UTF-8.
@@ -231,7 +290,7 @@ impl EventSource for MqttConnector {
                                 route_context: Some(
                                     crate::domain::connection_routing::RouteBinding::new(
                                         "mqtt",
-                                        serde_json::json!({"topic":p.topic}),
+                                        serde_json::json!({"topic":p.topic,"retain":p.retain}),
                                     ),
                                 ),
                                 event_type: s.event_type.clone(),
@@ -247,23 +306,73 @@ impl EventSource for MqttConnector {
                                 Some(std::time::Instant::now() + Duration::from_secs(20));
                             let accepted = tokio::select! {biased;_=ctx.cancellation.cancelled()=>return Ok(SourceExit::Cancelled),r=ingress.accept(operation,input)=>r};
                             if accepted.is_err() {
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Reconnecting,
+                                    Some("mqtt_ingress_unconfirmed"),
+                                );
                                 tracing::warn!(event="mqtt.ingress_unconfirmed",connection=%self.scope.connection_id);
                                 break;
                             }
                             // try_ack avoids deadlocking the event loop on its own request queue.
                             if client.try_ack(&p).is_err() {
+                                self.status.update(
+                                    self.scope.connection_id,
+                                    ConnectionState::Reconnecting,
+                                    Some("mqtt_ack_failed"),
+                                );
                                 break;
                             }
                         }
                         Ok(_) => {}
-                        Err(_) => {
-                            tracing::warn!(event="mqtt.disconnected",connection=%self.scope.connection_id);
+                        Err(error) => {
+                            let code = match error {
+                                rumqttc::ConnectionError::ConnectionRefused(
+                                    rumqttc::ConnectReturnCode::BadUserNamePassword
+                                    | rumqttc::ConnectReturnCode::NotAuthorized,
+                                ) => {
+                                    configuration_error = true;
+                                    "mqtt_authentication_failed"
+                                }
+                                rumqttc::ConnectionError::ConnectionRefused(
+                                    rumqttc::ConnectReturnCode::BadClientId
+                                    | rumqttc::ConnectReturnCode::RefusedProtocolVersion,
+                                ) => {
+                                    configuration_error = true;
+                                    "mqtt_protocol_rejected"
+                                }
+                                rumqttc::ConnectionError::Tls(_) => {
+                                    configuration_error = true;
+                                    "mqtt_tls_failed"
+                                }
+                                rumqttc::ConnectionError::NetworkTimeout => {
+                                    "mqtt_connection_timeout"
+                                }
+                                _ => "mqtt_connection_failed",
+                            };
+                            self.status.update(
+                                self.scope.connection_id,
+                                if configuration_error {
+                                    ConnectionState::Error
+                                } else {
+                                    ConnectionState::Reconnecting
+                                },
+                                Some(code),
+                            );
+                            tracing::warn!(event="mqtt.disconnected",connection=%self.scope.connection_id,code);
                             break;
                         }
                     }
                 }
-                tokio::select! {biased;_=ctx.cancellation.cancelled()=>return Ok(SourceExit::Cancelled),_=tokio::time::sleep(Duration::from_secs(delay))=>{}}
-                delay = (delay * 2).min(30);
+                let delay = backoff.disconnected(ready_since.map(|t| t.elapsed())).max(
+                    if configuration_error {
+                        Duration::from_secs(60)
+                    } else {
+                        Duration::ZERO
+                    },
+                );
+                tracing::info!(event="connection.retry_scheduled",connection_id=%self.scope.connection_id,retry_after_ms=delay.as_millis() as u64,"MQTT reconnect scheduled");
+                tokio::select! {biased;_=ctx.cancellation.cancelled()=>return Ok(SourceExit::Cancelled),_=tokio::time::sleep(delay)=>{}}
             }
         })
     }

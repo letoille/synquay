@@ -107,6 +107,7 @@ impl ToolRuntime {
         input: ServerChange,
     ) -> Result<Value, PortError> {
         self.workspace_admin(true).await?;
+        self.refresh_device_tools().await?;
         if id.is_nil()
             || input.operation_id.is_nil()
             || input.expected_revision >= i64::MAX as u64 - 1
@@ -136,11 +137,15 @@ impl ToolRuntime {
             let _permit = permit;
             let _gate = runtime.publication_gate.write().await;
             runtime.workspace_admin(true).await?;
+            let _devices_guard = runtime.store.device_io.read().await;
             let mut config = runtime.inventory_snapshot()?;
+            let devices = runtime.device_tools().await?;
             let mut names = HashSet::new();
             if input.exposed_tools.len() > 32
                 || !input.exposed_tools.iter().all(|name| {
-                    names.insert(name) && config.tools.iter().any(|t| &t.public_name == name)
+                    names.insert(name)
+                        && (config.tools.iter().any(|t| &t.public_name == name)
+                            || devices.iter().any(|t| &t.public_name == name))
                 })
             {
                 return Err(PortError::InvalidInput {
@@ -247,6 +252,12 @@ impl ToolRuntime {
                     code: "invalid_server_auth",
                 });
             }
+            let mut profile = config.profile();
+            profile.tools.extend(
+                devices
+                    .into_iter()
+                    .filter(|t| input.exposed_tools.contains(&t.public_name)),
+            );
             runtime
                 .store
                 .commit_mcp_server(
@@ -259,7 +270,7 @@ impl ToolRuntime {
                     json!(input),
                     server,
                     route_path,
-                    Some((config.profile(), config.snapshot())),
+                    Some((profile, config.snapshot())),
                 )
                 .await
         })
@@ -273,6 +284,7 @@ impl ToolRuntime {
         input: ServerDeletion,
     ) -> Result<Value, PortError> {
         self.workspace_admin(true).await?;
+        self.refresh_device_tools().await?;
         if id.is_nil()
             || input.operation_id.is_nil()
             || input.expected_revision == 0

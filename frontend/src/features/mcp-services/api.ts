@@ -38,11 +38,11 @@ function contentInventory(value: unknown): ContentInventory {
 }
 function view(v: unknown): ControlView {
   const r = obj(v), c = obj(r.connection);
-  if (!Array.isArray(r.tools) || r.tools.length > 32 || !['oauth', 'bearer'].includes(str(c.authentication))) return bad();
+  if (!Array.isArray(r.tools) || r.tools.length > 2048 || !['oauth', 'bearer'].includes(str(c.authentication))) return bad();
   const tools: Tool[] = r.tools.map(raw => {
     const t = obj(raw), d = obj(t.definition);
     if (!['ReadOnly', 'SideEffecting', 'Unknown'].includes(str(d.effect)) || typeof t.exposed !== 'boolean') return bad();
-    return { public_name: str(t.public_name), connection_id: str(t.connection_id), url: str(t.url), bearer_env: nullable(t.bearer_env), exposed: t.exposed, allow_loopback_http: t.allow_loopback_http === undefined ? false : typeof t.allow_loopback_http === 'boolean' ? t.allow_loopback_http : bad(),
+    return { public_name: str(t.public_name), connection_id: str(t.connection_id), url: t.protocol==='mqtt'?'':str(t.url), bearer_env: t.protocol==='mqtt'?null:nullable(t.bearer_env), exposed: t.exposed, allow_loopback_http: t.allow_loopback_http === undefined ? false : typeof t.allow_loopback_http === 'boolean' ? t.allow_loopback_http : bad(),
       definition: { id: str(d.id), description: str(d.description), effect: d.effect as Tool['definition']['effect'], input_schema: obj(d.input_schema), output_schema: d.output_schema === null ? null : obj(d.output_schema) } };
   });
   return { content: r.content===undefined?undefined:contentInventory(r.content), ...(r.workspace === undefined ? {} : { workspace: { id: str(obj(r.workspace).id), name: str(obj(r.workspace).name), state: str(obj(r.workspace).state) } }), revision: integer(r.revision), profile_id: str(r.profile_id), admin_id: str(r.admin_id), tools, draft: r.draft === null ? null : draft(r.draft),

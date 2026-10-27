@@ -125,7 +125,7 @@ impl MessageSink for HttpClientSink {
                 .header("Idempotency-Key", r.delivery_id.to_string())
                 .body(bytes)
                 .send();
-            let response = tokio::select! {biased;_=ctx.stopped()=>return Err(PortError::OutcomeUnknown),r=request=>r.map_err(|e|if e.is_connect(){PortError::Unavailable}else{PortError::OutcomeUnknown})?};
+            let response = tokio::select! {biased;_=ctx.stopped()=>return Err(PortError::OutcomeUnknown),r=request=>r.map_err(|e|if e.is_connect(){PortError::NotSent { retry_after: None }}else{PortError::OutcomeUnknown})?};
             let status = response.status();
             if status.is_success() {
                 Ok(DeliveryReceipt {
@@ -134,17 +134,7 @@ impl MessageSink for HttpClientSink {
                     status: DeliveryStatus::Accepted,
                 })
             } else if status.as_u16() == 429 {
-                Err(PortError::RateLimited {
-                    retry_after: Duration::from_secs(
-                        response
-                            .headers()
-                            .get("retry-after")
-                            .and_then(|h| h.to_str().ok())
-                            .and_then(|v| v.parse::<u64>().ok())
-                            .unwrap_or(60)
-                            .clamp(1, 86400),
-                    ),
-                })
+                Err(super::http_retry::rate_limited(response.headers()))
             } else if status.is_server_error() || status.as_u16() == 408 {
                 Err(PortError::OutcomeUnknown)
             } else {

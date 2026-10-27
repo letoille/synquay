@@ -1,3 +1,4 @@
+import {capabilityErrors} from './capabilities.ts';
 import type {Connection} from './api';
 export type FieldErrors=Record<string,string>;
 export type ServerFieldError={path:string;code:string};
@@ -55,9 +56,10 @@ export function validateConnection(connection:Connection,secret:string,original?
    if(!!c.tls.client_cert_env!==!!c.tls.client_key_env)errors[c.tls.client_cert_env?'config.tls.client_key_env':'config.tls.client_cert_env']='客户端证书和私钥必须同时配置。';
   }
  }
+ if(c.kind==='mqtt'&&c.capabilities)Object.assign(errors,capabilityErrors(c.capabilities));
  return errors;
 }
-export const fieldMessages:Record<string,string>={
+export const fieldMessages:Record<string,string>={invalid_mqtt_capabilities:'请检查工具和资源状态配置。',unsupported_schema:'参数定义只能使用本地 JSON Schema 引用。',invalid_schema:'参数定义不是有效的 JSON Schema。',resource_topic_not_subscribed:'状态分组的 Topic 必须包含在订阅范围内。',
  invalid_event_type:'请填写事件类型，不能包含控制字符，最多 128 字节。',invalid_event_header:'请求头需以 x- 开头，仅含小写字母、数字和短横线，不能使用签名专用头。',invalid_qos:'QoS 仅支持 0 或 1。',invalid_subscription_topic:'请填写订阅 Topic；+ 占一个层级，# 只能位于最后一个层级。',invalid_publish_topic:'请填写发布 Topic，不能包含 + 或 # 通配符。',
 
  invalid_connection_name:'名称过长或含有控制字符。',invalid_connection_description:'说明不能超过 4000 字节。',
@@ -66,4 +68,4 @@ export const fieldMessages:Record<string,string>={
  invalid_http_url:'填写完整的 HTTPS 地址；使用 HTTP 时需勾选允许普通 HTTP。',invalid_http_method:'请选择 POST、PUT 或 PATCH。',invalid_http_username:'用户名不能包含冒号，最多 256 字节。',invalid_http_auth:'此认证信息无法构成有效的 HTTP 请求头。',
  invalid_mqtt_host:'只填写 Broker 主机名或 IP，不包含协议、端口或路径。',invalid_mqtt_port:'端口必须为 1–65535 的整数。',invalid_mqtt_username:'用户名不能为空或含有空字符，最多 256 字节。',invalid_mqtt_password:'此环境变量中的密码无效。',mqtt_receive_or_send_required:'至少启用订阅接收或发布发送。',mqtt_username_required:'配置密码时需要填写用户名。',invalid_mqtt_subscription:'请检查订阅 Topic、QoS 和事件类型。',invalid_mqtt_publish:'请检查发布 Topic 和 QoS。',mqtt_topic_loop:'发布 Topic 不能匹配同一连接的订阅 Topic。',mqtt_client_certificate_pair:'客户端证书和私钥必须同时配置。',invalid_mqtt_ca:'此环境变量中的 CA 证书无效。',invalid_mqtt_certificate:'客户端证书无效或与私钥不匹配。',invalid_mqtt_key:'此环境变量中的私钥无效。',invalid_webhook_secret:'Webhook 密钥须为 32–4096 个可见 ASCII 字符。',
 };
-export const formMessages:Record<string,string>={origin_denied:'当前页面地址未被后端允许，请使用配置的管理台地址或配置允许的来源。',permission_denied:'当前操作没有权限。',invalid_input:'请求格式不兼容，请刷新页面并确认前后端版本一致。',version_conflict:'配置已更新，请刷新后重试。',connection_has_pending_work:'连接仍有待处理消息，请处理后再修改或删除。',rate_limited:'请求过于频繁，请稍后重试。',payload_too_large:'提交内容过大，请缩短配置内容。',not_found:'此连接已不存在，请刷新列表。',not_supported:'当前后端不支持此操作，请检查服务版本。',invalid_connection_id:'连接编号无效，请重新打开表单。'};
+export const formMessages:Record<string,string>={invalid_mqtt_capabilities:'请检查工具和资源状态配置。',resource_topic_not_subscribed:'状态分组的 Topic 必须包含在订阅范围内。',origin_denied:'当前页面地址未被后端允许，请使用配置的管理台地址或配置允许的来源。',permission_denied:'当前操作没有权限。',invalid_input:'请求格式不兼容，请刷新页面并确认前后端版本一致。',version_conflict:'配置已更新，请刷新后重试。',connection_has_pending_work:'连接仍有待处理消息，请处理后再修改或删除。',rate_limited:'请求过于频繁，请稍后重试。',payload_too_large:'提交内容过大，请缩短配置内容。',not_found:'此连接已不存在，请刷新列表。',not_supported:'当前后端不支持此操作，请检查服务版本。',invalid_connection_id:'连接编号无效，请重新打开表单。'};

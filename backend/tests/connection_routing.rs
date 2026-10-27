@@ -9,6 +9,7 @@ fn binding(adapter: &str, v: serde_json::Value) -> RouteBinding {
 }
 fn mqtt() -> ConnectionConfig {
     ConnectionConfig::Mqtt(MqttConfig {
+        capabilities: Default::default(),
         host: "localhost".into(),
         port: 1883,
         username: None,
