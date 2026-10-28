@@ -35,7 +35,7 @@ RoutePlanCommitter 同事务 CAS 完成任务、保存 DispatchRun、逐个创�
 
 ## 循环与对接
 
-Event → RoutingTask → Planner → DispatchPlan → Outbox/AgentInbox。route_trace 逐步扩为连接与规范目的地/会话维度的 RouteHop，并结合最大跳数、源消息映射与回流标记；无法识别回流的渠道不承诺完全防循环。AI 回复是显式新交互，但仍携带原 correlation 和 reply lineage。
+Event → RoutingTask → Planner → DispatchPlan → Outbox。route_trace 逐步扩为连接与规范目的地/会话维度的 RouteHop，并结合最大跳数、源消息映射与回流标记；无法识别回流的渠道不承诺完全防循环。AI 回复是显式新交互，但仍携带原 correlation 和 reply lineage。
 
 表组为 route_revisions、route_set_revisions、routing_tasks、dispatch_runs、dispatch_targets。运行时权限与快照规则分别检查；停用目的地使待办阻塞或取消，不能替换为其他收件人。
 

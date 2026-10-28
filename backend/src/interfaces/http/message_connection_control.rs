@@ -26,6 +26,10 @@ pub(super) fn router(state: AppState) -> Router {
         .route("/api/message-connections", get(view).post(change))
         .route("/api/message-connections/{id}/states", get(states))
         .route(
+            "/api/message-connections/{id}/capabilities",
+            get(capabilities),
+        )
+        .route(
             "/api/message-connections/{id}/conversations",
             get(conversations),
         )
@@ -44,7 +48,7 @@ async fn view(State(state): State<AppState>) -> Response {
                     Ok(v) => v,
                     Err(e) => return error(e),
                 };
-                Json(serde_json::json!({"available":p.agent.is_none(),"snapshot":public,"observations":observations}))
+                Json(serde_json::json!({"available":true,"snapshot":public,"observations":observations}))
                     .into_response()
             }
             Err(e) => error(e),
@@ -88,6 +92,24 @@ async fn change(State(state): State<AppState>, request: Request) -> Response {
             Json(serde_json::json!({"operation_id":id,"revision":revision})).into_response()
         }
         Err(PortError::InvalidInput { code }) => validation::response(code, connection.as_ref()),
+        Err(e) => error(e),
+    }
+}
+
+async fn capabilities(State(state): State<AppState>, Path(id): Path<uuid::Uuid>) -> Response {
+    use crate::application::ports::connection_actions::ConnectionCapabilityCatalog;
+    if let Err(e) = access(&state, false).await {
+        return error(e);
+    }
+    let Some(pipeline) = state.pipeline else {
+        return error(PortError::Unsupported);
+    };
+    let _guard = pipeline.connection_io.read().await;
+    match pipeline.connection_snapshot() {
+        Ok(snapshot) => match snapshot.connections.into_iter().find(|c| c.id == id) {
+            Some(connection) => Json(serde_json::json!({"connection_id":id,"enabled":connection.enabled,"capabilities":connection.capabilities()})).into_response(),
+            None => error(PortError::NotFound),
+        },
         Err(e) => error(e),
     }
 }
@@ -146,6 +168,7 @@ mod tests {
             pipeline::message_connections::ConnectionSnapshot,
         };
         let c = MessageConnection {
+            recent_messages: Default::default(),
             id: uuid::Uuid::new_v4(),
             name: "Bot".into(),
             description: String::new(),

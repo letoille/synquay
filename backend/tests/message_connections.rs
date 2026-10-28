@@ -81,6 +81,7 @@ async fn scenario() {
     );
     let actor = Uuid::from_u128(10);
     let webhook = MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "Webhook".into(),
         description: "".into(),
@@ -97,6 +98,7 @@ async fn scenario() {
         },
     };
     let out = MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "HTTP endpoint".into(),
         description: "".into(),
@@ -141,6 +143,7 @@ async fn scenario() {
             expected_revision: view.snapshot.revision,
             route_id,
             change: RouteChange::Save {
+                message_types: default_message_types(),
                 response: None,
                 routing: None,
                 name: "Webhook → HTTP".into(),
@@ -212,6 +215,7 @@ async fn scenario() {
     assert_eq!(p.routes_view().await.unwrap().matched[&route_id], 1);
 
     let paused = MessageConnection {
+        recent_messages: Default::default(),
         enabled: false,
         ..webhook.clone()
     };
@@ -386,6 +390,7 @@ async fn managed_mqtt_subscription_and_publish_share_configuration_and_route_bot
             .unwrap(),
     );
     let mqtt = MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "Heater".into(),
         description: "".into(),
@@ -412,6 +417,7 @@ async fn managed_mqtt_subscription_and_publish_share_configuration_and_route_bot
         }),
     };
     let target = MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "HTTP".into(),
         description: "".into(),
@@ -452,6 +458,7 @@ async fn managed_mqtt_subscription_and_publish_share_configuration_and_route_bot
                 expected_revision: revision,
                 route_id: Uuid::new_v4(),
                 change: RouteChange::Save {
+                    message_types: default_message_types(),
                     response: None,
                     routing: None,
                     name: event_type.into(),
@@ -558,6 +565,7 @@ async fn message_connection_api_enforces_workspace_and_origin() {
 
     let id = Uuid::new_v4();
     let connection = MessageConnection {
+        recent_messages: Default::default(),
         id,
         name: "API HTTP".into(),
         description: String::new(),

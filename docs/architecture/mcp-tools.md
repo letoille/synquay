@@ -84,4 +84,4 @@ python3 scripts/inspect_tools.py ./synquay-tools.db
 
 验证命令：`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all --check`；实际进程验证使用 `scripts/smoke_mcp.py` 和 `scripts/smoke_pipeline.py`，先执行 `cargo build -p synquay-server --examples --bin synquay-server`。
 
-后续已补 OAuth 资源服务器和在线暴露发布，当前进展见[OAuth 接入与在线配置发布](oauth-publication.md)。Keycloak 本地联调已通过；接下来完成管理台和公网客户端验证，再做上游 MCP 桥接和 Agent 收件箱。CLI/MQTT 执行器、长任务、完整在线配置 UI、消息经 AI 分析后的原路回复仍按模块路线推进；静态资源/提示词文件发布已完成。
+后续已补 OAuth 资源服务器和在线暴露发布，当前进展见[OAuth 接入与在线配置发布](oauth-publication.md)。Keycloak 本地联调已通过；接下来完成管理台和公网客户端验证，再做上游 MCP 桥接。CLI/MQTT 执行器、长任务、完整在线配置 UI、消息经 AI 分析后的原路回复仍按模块路线推进；静态资源/提示词文件发布已完成。

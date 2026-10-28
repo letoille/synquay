@@ -25,6 +25,7 @@ impl SqliteStore {
         checkpoint: Option<crate::application::ports::checkpoints::Checkpoint>,
     ) -> PortFuture<'_, IngestReceipt> {
         let path = self.path.clone();
+        let recent = self.recent.clone();
         Box::pin(self.run(move |c| {
             if checkpoint.is_some() && event.source_event_id.as_ref().is_none_or(|s|s.is_empty() || s.len()>256) {return Err(PortError::InvalidInput{code:"checkpoint_requires_source_id"});}
             let fingerprint = fingerprint(&event)?;
@@ -47,7 +48,7 @@ impl SqliteStore {
             }
             let record = record::encode(&event)?;
             let key = format!("event:{s}:{}",event.event_id);
-            if let Err(error) = capacity::reserve(&tx,&path,&w,&key,record.len() + if tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_binding)",[],|r|r.get::<_,bool>(0)).map_err(db_error)? {super::agent::REPLY_BUDGET} else {0},millis(event.received_at)?) {
+            if let Err(error) = capacity::reserve(&tx,&path,&w,&key,record.len(),millis(event.received_at)?) {
                 // Persist the high-watermark latch, without accepting this event.
                 if matches!(error,PortError::CapacityExceeded {..}) { tx.commit().map_err(|_| PortError::OutcomeUnknown)?; }
                 return Err(error);
@@ -56,10 +57,16 @@ impl SqliteStore {
             tx.execute("INSERT INTO events(workspace,source,event_id,source_event_id,received_ms,record,config_revision,fingerprint) VALUES(?1,?2,?3,?4,?5,?6,(SELECT revision FROM active_release WHERE singleton=1),?7)",
                 params![w,s,event.event_id.to_string(),event.source_event_id,millis(event.received_at)?,record,fingerprint]).map_err(db_error)?;
             super::conversations::observe(&tx,&event)?;
-            super::device_state::observe(&tx,&event)?;
+            let is_state_report = super::device_state::observe(&tx,&event)?;
+            if is_state_report {
+                let mut classified=event.clone();
+                classified.state_report=true;
+                tx.execute("UPDATE events SET record=?4 WHERE workspace=?1 AND source=?2 AND event_id=?3",params![w,s,event.event_id.to_string(),record::encode(&classified)?]).map_err(db_error)?;
+            }
             if let EventPayload::Content(reference)=&event.payload { super::content::attach(&tx,event.scope,event.event_id,reference)?; }
             tx.execute("INSERT INTO routing_tasks(workspace,source,event_id,state,due_ms) VALUES(?1,?2,?3,'ready',?4)",params![w,s,event.event_id.to_string(),millis(event.received_at)?]).map_err(db_error)?;
             tx.commit().map_err(|_| PortError::OutcomeUnknown)?;
+            if is_state_report { let mut classified = event.clone(); classified.state_report = true; recent.observe(&classified); } else { recent.observe(&event); }
             Ok(IngestReceipt {event_id: event.event_id, disposition: IngestDisposition::Stored})
         }))
     }
@@ -116,13 +123,28 @@ fn fingerprint(event: &EventEnvelope) -> Result<String, PortError> {
         }
     }
     let mut writer = DigestWriter(ring::digest::Context::new(&ring::digest::SHA256), 0);
+    // Enrichment is mutable metadata and must not change upstream deduplication.
+    let mut normalized = None;
+    if event
+        .route_context
+        .as_ref()
+        .is_some_and(|b| b.adapter == "qq" && b.version == 1)
+        && let EventPayload::Json(payload) = &event.payload
+        && payload.get("group_name").is_some()
+    {
+        let mut payload = payload.clone();
+        if let Some(object) = payload.as_object_mut() {
+            object.remove("group_name");
+        }
+        normalized = Some(EventPayload::Json(payload));
+    }
     serde_json::to_writer(
         &mut writer,
         &(
             &event.event_type,
             event.schema_version,
             &event.occurred_at,
-            &event.payload,
+            normalized.as_ref().unwrap_or(&event.payload),
         ),
     )
     .map_err(|e| {

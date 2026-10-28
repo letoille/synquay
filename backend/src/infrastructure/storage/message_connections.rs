@@ -71,6 +71,9 @@ impl SqliteStore {
             let inbound:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM routing_tasks WHERE workspace=?1 AND source=?2 AND state<>'completed')",params![ws,source.to_string()],|r|r.get(0)).map_err(db_error)?;
             if pending||inbound{return Err(PortError::InvalidInput{code:"connection_has_pending_work"});}
         }
+        let previous_record: Option<String> = tx.query_row("SELECT record FROM message_connections WHERE workspace=?1 AND source=?2",params![ws,src],|r|r.get(0)).optional().map_err(db_error)?;
+        let previous: ConnectionSnapshot = previous_record.as_deref().map(decode).transpose()?.unwrap_or_default();
+        super::builtin_scopes::prune_connection_grants(&tx, scope.workspace_id, input.connection_id, previous.connections.iter().find(|c| c.id == input.connection_id), input.connection.as_ref(), actor, input.operation_id)?;
         // Remove obsolete account discoveries when a bot is removed or replaced.
         if let Some(crate::infrastructure::connectors::message_config::ConnectionConfig::QqBot(qq))=input.connection.as_ref().map(|c|&c.config) {
             tx.execute("DELETE FROM connection_conversations WHERE workspace=?1 AND connection=?2 AND account<>?3",params![ws,input.connection_id.to_string(),qq.app_id]).map_err(db_error)?;

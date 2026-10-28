@@ -2,7 +2,7 @@
 
 P1 已实现受保护 ContentRef、FileContentStore、HTTP 流式上传/下载及单内容二进制投递；多附件会话回复、对象存储及按任务授权仍待实现。详见[P1 实现](../p1-storage.md)。
 
-本模块拥有消息的渠道身份、会话关系、回复地址与内容引用。已有 Message/ContentPart、ReplyRoute 和 ReplyService；本地持久化内容已在 P1 实现；首个 Agent 回复闭环通过固定 HTTP 来源适配器回传原消息 ID，详见[收件箱实现](../../agent-inbox.md)；通用会话映射、多渠道路线创建及多附件回复仍待补。
+本模块拥有消息的渠道身份、会话关系、回复地址与内容引用。已有 Message/ContentPart、ReplyRoute 和 ReplyService；本地持久化内容已在 P1 实现；通用会话映射、多渠道路线创建及多附件回复仍待补。
 
 ## 领域对象与归属
 

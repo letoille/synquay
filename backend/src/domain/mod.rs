@@ -19,8 +19,6 @@ pub mod workspace;
 
 pub mod mcp_content;
 
-pub mod agent;
-
 pub mod mcp_server;
 
 pub mod managed_route;
@@ -28,3 +26,7 @@ pub mod managed_route;
 pub mod command;
 
 pub mod connection_routing;
+
+pub mod recent_messages;
+
+pub mod builtin_tools;

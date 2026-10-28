@@ -20,7 +20,6 @@ Synquay is a self-hosted gateway built with **Rust and React**. Connect applicat
 - Forward an application's Webhook events to an HTTP endpoint or MQTT topic.
 - Receive QQ group or direct messages, match commands, and reply or invoke a configured capability.
 - Give an MCP client access to selected HTTP tools, resources, and prompts.
-- Use the separate Agent inbox mode to persist incoming messages, let an Agent worker claim and process jobs through MCP, and deliver results to a configured HTTP callback.
 
 Synquay handles integration and delivery. Model inference runs in your Agent. Receiving a Webhook does **not** automatically wake ChatGPT or another MCP client.
 
@@ -29,7 +28,7 @@ Synquay handles integration and delivery. Model inference runs in your Agent. Re
 | Area | Available today |
 | --- | --- |
 | Connections | Authenticated Webhooks; HTTP/HTTPS clients; MQTT 3.1.1 subscriptions and publishing over TCP/TLS; official QQ Bot text messaging |
-| Routing | Source filters, multiple destinations, command mapping, direct replies, capability calls, and HTTP Agent destinations |
+| Routing | Source filters, multiple destinations, command mapping, direct replies, capability calls |
 | MCP | Multiple services with separate URLs and exposure scopes; Streamable HTTP; tools, resources, resource templates, prompts, and completion |
 | MCP authentication | Basic Auth, JWT verification, external OAuth token introspection, and unauthenticated mode; deployment-level Bearer configuration remains available |
 | Delivery | SQLite persistence, event deduplication, transactional Outbox, bounded queues, backpressure, and recovery for uncertain outcomes |
@@ -78,7 +77,7 @@ The package includes the backend, console, and systemd service. It runs as a ded
 2. **Routes:** choose a receiving connection, processing mode, and destination. Enable the connection and route when ready.
 3. **MCP services:** create or edit a service and select the capabilities to expose. Add its address and authentication settings to your MCP client.
 
-Message forwarding can run independently of MCP. The Agent inbox is a separate deployment mode; asynchronous Agent results are not yet automatically linked back to arbitrary QQ conversations.
+Message forwarding can run independently of MCP. External processors may use configured connections; asynchronous replies are not automatically linked to arbitrary QQ conversations.
 
 ### Develop locally
 
@@ -111,7 +110,6 @@ Most detailed design and protocol documents are currently in Chinese.
 | [QQ Bot](docs/qq-bot.md) | Callbacks, credentials, and messaging constraints |
 | [Connection routing](docs/connection-routing.md) | Topics, conversations, commands, and replies |
 | [MCP content](docs/webhook-mcp.md) | Tools, resources, prompts, and protocol boundaries |
-| [Agent inbox](docs/agent-inbox.md) | Claiming jobs and submitting results through MCP |
 | [Architecture](docs/architecture/README.md) | Module contracts and extension points |
 
 ## Project layout
@@ -130,7 +128,6 @@ docs/                Architecture and operating guides
 - Management-console login and a complete authorization experience.
 - Upstream MCP server bridging and executable CLI adapters.
 - Scheduled automation and broader connector support.
-- Trusted asynchronous Agent replies to originating conversations.
 
 These are planned capabilities, not features enabled by the current package.
 

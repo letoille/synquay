@@ -1272,3 +1272,12 @@ input[type=checkbox] {
 @media(max-width:560px) { .capability-page-form { padding:18px; } }
 
 .page-heading[hidden] { display:none; }
+.builtin-editor { margin:20px 0; padding:16px; border:1px solid var(--border); border-radius:10px; }
+.builtin-editor h3, .builtin-editor h4 { margin:0 0 10px; font-size:13px; }
+.builtin-editor h4 { margin-top:16px; }
+.builtin-choice { display:inline-flex; align-items:center; gap:7px; margin:4px 16px 4px 0; font-size:13px; }
+.builtin-conversations { padding:0 0 8px 20px; }
+.builtin-conversations input:not([type=checkbox]) { max-width:260px; }
+.builtin-conversations .builtin-choice { display:flex; }
+.route-message-types { display:grid; gap:6px; margin:12px 0; }
+.route-message-types > small { color:var(--muted); }

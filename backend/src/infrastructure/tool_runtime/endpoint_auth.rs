@@ -152,7 +152,6 @@ impl ToolRuntime {
                     required_scope: required_scope.clone(),
                     allow_loopback_http: *allow_loopback_http,
                     grants: vec![OAuthGrant {
-                        agent_jobs: false,
                         resources: vec![],
                         prompts: vec![],
                         subject: subject.clone(),

@@ -75,12 +75,9 @@ impl CommandJob {
     }
 }
 pub(super) fn definitions(config: &ConnectionConfig) -> Vec<ConnectionAction> {
-    match config {
-        ConnectionConfig::Mqtt(c) => crate::infrastructure::connectors::mqtt::actions::catalog(c),
-        ConnectionConfig::QqBot(_) => crate::infrastructure::connectors::qq::actions::catalog(),
-        _ => vec![],
-    }
+    crate::infrastructure::connectors::capability_catalog::operations(config)
 }
+
 pub(super) fn validate(
     catalog: &ConnectionSnapshot,
     r: &ManagedRoute,

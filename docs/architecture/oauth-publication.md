@@ -88,4 +88,4 @@ SQLite 自动迁移至 v7；迁移失败保留原版本。新增三张表：
 
 `python3 scripts/smoke_oauth_control.py` 用编译后的服务器、官方 SDK 示例客户端与本地模拟授权服务，验证配置装配、发现、调用、管理凭据隔离、在线隐藏、重复发布、旧文件重启恢复、撤销及日志不含测试秘密。此前的 MCP 进程冒烟也通过。运行前执行 `cargo build --locked --examples --bin synquay-server`。
 
-Keycloak 本地授权、刷新、撤销与 MCP 调用已通过，见[真实授权联调](keycloak-integration.md)。首期管理台已实现；下一步完善运行视图与动态 grant 管理；公网联调另行安排。上游 MCP 桥接、Agent 收件箱和原路回复仍需各自实现；当前没有令牌签发服务、完整 OIDC 登录、分布式发布或自动调用 AI 的后台任务。
+Keycloak 本地授权、刷新、撤销与 MCP 调用已通过，见[真实授权联调](keycloak-integration.md)。首期管理台已实现；下一步完善运行视图与动态 grant 管理；公网联调另行安排。上游 MCP 桥接与原路回复仍需各自实现；当前没有令牌签发服务、完整 OIDC 登录、分布式发布或自动调用 AI 的后台任务。

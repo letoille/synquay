@@ -18,6 +18,7 @@ pub fn scope() -> ConnectionScope {
 }
 pub fn event(scope: ConnectionScope) -> EventEnvelope {
     EventEnvelope {
+        state_report: false,
         route_context: None,
         event_id: Uuid::new_v4(),
         scope,
@@ -65,7 +66,6 @@ pub const TOKEN: &str = "test-only-webhook-token-0123456789abcdef";
 pub fn config(path: &Path, url: &str) -> PipelineConfig {
     PipelineConfig {
         bootstrap_routes: true,
-        agent: None,
         webhook: Default::default(),
         content: None,
         retention: None,

@@ -8,6 +8,9 @@ const openid=/^[A-Za-z0-9_-]{1,128}$/;
 const eventType=(s:string)=>!!s.trim()&&bytes(s)<=128&&!/[\x00-\x1f\x7f-\x9f]/.test(s);
 export function validateConnection(connection:Connection,secret:string,original?:Connection):FieldErrors {
  const errors:FieldErrors={};const c=connection.config;
+ const recent=connection.recent_messages;
+ if(recent&&(!Number.isInteger(recent.max_items)||recent.max_items<1||recent.max_items>1000))errors['recent_messages.max_items']='请输入 1–1000 的整数。';
+ if(recent&&(!Number.isInteger(recent.ttl_seconds)||recent.ttl_seconds<1||recent.ttl_seconds>3600))errors['recent_messages.ttl_seconds']='请输入 1–3600 的整数。';
  if(!connection.name.trim())errors.name='请填写名称。';
  else if(bytes(connection.name)>120||/[\x00-\x1f\x7f]/.test(connection.name))errors.name='名称过长或含有控制字符。';
  if(bytes(connection.description)>4000)errors.description='说明不能超过 4000 字节。';

@@ -438,7 +438,6 @@ async fn oauth_discovery_claim_checks_scope_challenge_grants_and_revocation() {
         allow_loopback_http: true,
         grants: vec![
             OAuthGrant {
-                agent_jobs: false,
                 resources: vec![],
                 prompts: vec![],
                 subject: "alice".into(),
@@ -448,7 +447,6 @@ async fn oauth_discovery_claim_checks_scope_challenge_grants_and_revocation() {
                 tools: vec!["echo".into()],
             },
             OAuthGrant {
-                agent_jobs: false,
                 resources: vec![],
                 prompts: vec![],
                 subject: "bob".into(),
@@ -1094,7 +1092,7 @@ async fn v7_history_index_failure_preserves_v6_and_can_be_retried() {
     assert_eq!(
         sql.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        20
+        21
     );
 }
 
@@ -1524,6 +1522,7 @@ async fn managed_mcp_servers_have_isolated_catalogs_crud_and_restart_tombstones(
     let a = Uuid::new_v4();
     let b = Uuid::new_v4();
     let change = |name: &str, names: Vec<String>| ServerChange {
+        builtin_scope: None,
         description: None,
         public_url: None,
         content_scope: None,
@@ -1595,6 +1594,7 @@ async fn managed_mcp_servers_have_isolated_catalogs_crud_and_restart_tombstones(
         Some(true)
     );
     let edit = ServerChange {
+        builtin_scope: None,
         description: None,
         public_url: None,
         content_scope: None,
@@ -1691,6 +1691,7 @@ async fn managed_mcp_servers_have_isolated_catalogs_crud_and_restart_tombstones(
     // A deleted service ID cannot be reused, even with expected_revision=0.
     assert!(restored.save_server(a, first).await.is_err());
     let disable = ServerChange {
+        builtin_scope: None,
         description: None,
         public_url: None,
         content_scope: None,
@@ -1717,6 +1718,7 @@ async fn default_mcp_edits_restore_without_admin_and_server_migration_is_atomic_
     let build = || ToolRuntime::build_with_secrets(cfg.clone(), TOKEN.into(), vec![None]);
     let rt = build().await.unwrap();
     let input = ServerChange {
+        builtin_scope: None,
         description: None,
         public_url: None,
         content_scope: None,
@@ -1782,7 +1784,7 @@ async fn default_mcp_edits_restore_without_admin_and_server_migration_is_atomic_
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        20
+        21
     );
 }
 

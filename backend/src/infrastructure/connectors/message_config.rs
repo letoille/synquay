@@ -13,6 +13,25 @@ pub struct MessageConnection {
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
     pub config: ConnectionConfig,
+    #[serde(default)]
+    pub recent_messages: RecentMessagesConfig,
+}
+/// Per-connection in-memory cache. This does not control durable event retention.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RecentMessagesConfig {
+    pub enabled: bool,
+    pub max_items: u16,
+    pub ttl_seconds: u32,
+}
+impl Default for RecentMessagesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_items: 100,
+            ttl_seconds: 600,
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -138,6 +157,16 @@ impl MessageConnection {
         {
             return Err(invalid("invalid_connection"));
         }
+        if self.recent_messages.max_items == 0
+            || self.recent_messages.max_items > 1000
+            || self.recent_messages.ttl_seconds == 0
+            || self.recent_messages.ttl_seconds > 3600
+        {
+            return Err(invalid("invalid_recent_messages_config"));
+        }
+        if self.recent_messages.enabled && !self.receives() {
+            return Err(invalid("recent_messages_unsupported"));
+        }
         match &self.config {
             ConnectionConfig::Webhook { secret_env, policy } => {
                 policy.validate()?;
@@ -151,6 +180,17 @@ impl MessageConnection {
             ConnectionConfig::QqBot(c) => c.validate()?,
         }
         Ok(())
+    }
+    pub(crate) fn recent_source(
+        &self,
+    ) -> Option<crate::infrastructure::storage::recent_messages::RecentSource> {
+        use crate::infrastructure::storage::recent_messages::RecentSource;
+        match &self.config {
+            ConnectionConfig::QqBot(_) => Some(RecentSource::Qq),
+            ConnectionConfig::Mqtt(m) if m.subscription.is_some() => Some(RecentSource::Mqtt),
+            ConnectionConfig::Webhook { .. } => Some(RecentSource::Webhook),
+            _ => None,
+        }
     }
     pub fn receives(&self) -> bool {
         matches!(&self.config, ConnectionConfig::Webhook { .. })

@@ -45,9 +45,9 @@ impl PolicyEngine for WorkspacePolicy {
             if access.member.role == WorkspaceRole::Viewer {
                 let read = matches!(
                     (&action, &resource),
-                    (Action::ReadAgentJobs, Resource::AgentQueue { .. })
-                        | (Action::UseProfile, Resource::Profile { .. })
+                    (Action::UseProfile, Resource::Profile { .. })
                         | (Action::ReadMcpResource, Resource::McpResource { .. })
+                        | (Action::ReadMcpBuiltin, Resource::McpBuiltin { .. })
                         | (Action::GetMcpPrompt, Resource::McpPrompt { .. })
                 ) || match (&action, &resource) {
                     (Action::InvokeTool, Resource::Tool { scope, tool_id }) => self

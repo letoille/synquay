@@ -13,6 +13,7 @@ impl SqliteStore {
         self.run_critical(move |c| {
             let server = McpServer {
                 id,
+                builtin_scope: Default::default(),
                 name: "默认 MCP 服务".into(),
                 description: String::new(),
                 public_url: None,

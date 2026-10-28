@@ -44,19 +44,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         Err(std::env::VarError::NotPresent) => None,
         Err(_) => return Err("SYNQUAY_TOOLS_CONFIG must contain valid Unicode".into()),
     };
-    if let Some(p) = &pipeline
-        && p.agent.is_some()
-    {
-        let runtime = tools
-            .as_ref()
-            .filter(|r| r.agent.is_some())
-            .ok_or("Agent pipeline requires MCP agent_jobs=true")?;
-        if std::fs::canonicalize(p.database_path())?
-            != std::fs::canonicalize(&runtime.config.database)?
-        {
-            return Err("Agent pipeline and MCP must share the same database".into());
-        }
-    }
     let web = std::env::var_os("SYNQUAY_WEB_DIR").map(std::path::PathBuf::from);
     if let Some(path) = &web
         && !path.join("index.html").is_file()

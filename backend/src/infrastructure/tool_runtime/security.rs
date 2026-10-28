@@ -9,8 +9,6 @@ use uuid::Uuid;
 #[serde(deny_unknown_fields)]
 pub struct OAuthGrant {
     #[serde(default)]
-    pub agent_jobs: bool,
-    #[serde(default)]
     pub resources: Vec<String>,
     #[serde(default)]
     pub prompts: Vec<String>,

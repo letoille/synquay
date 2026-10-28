@@ -65,7 +65,6 @@ fn config(path: std::path::PathBuf, url: String) -> ToolsConfig {
     hidden.connection_id = Uuid::from_u128(5);
     hidden.exposed = false;
     ToolsConfig {
-        agent_jobs: false,
         mcp_content: Default::default(),
         database: path,
         workspace_id: Uuid::from_u128(1),

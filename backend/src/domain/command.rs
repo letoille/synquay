@@ -303,6 +303,21 @@ mod tests {
         );
     }
     #[test]
+    fn qq_group_name_mapping_keeps_name_or_null() {
+        let mapping = command(
+            CommandMode::Prefix,
+            json!({"group":{"$payload":"/group_name"}}),
+        );
+        for name in [json!("反馈群"), json!(null)] {
+            let payload = EventPayload::Json(json!({"content":"/助手 hi", "group_name":name}));
+            let result = mapping
+                .render(&payload, &mapping.capture(&payload).unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.1["group"], name);
+        }
+    }
+    #[test]
     fn invalid_templates_missing_fields_and_expansion_are_rejected() {
         for template in [
             json!({"$command":"unknown"}),

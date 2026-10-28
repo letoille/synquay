@@ -94,6 +94,44 @@ impl QqBotSink {
         });
         Ok(value)
     }
+    pub(super) async fn group_name(&self, group: &str) -> Result<String, PortError> {
+        if !super::openid(group) {
+            return Err(PortError::InvalidInput {
+                code: "invalid_qq_group",
+            });
+        }
+        let token = self.access_token().await?;
+        let mut auth = reqwest::header::HeaderValue::from_str(&format!("QQBot {token}"))
+            .map_err(|_| PortError::PermissionDenied)?;
+        auth.set_sensitive(true);
+        let response = self
+            .client
+            .get(format!("{}/v2/groups/{group}/info", self.base))
+            .header(reqwest::header::AUTHORIZATION, auth)
+            .send()
+            .await
+            .map_err(|_| PortError::Unavailable)?;
+        let status = response.status();
+        if status.as_u16() == 401 {
+            *self.token.lock().await = None;
+        }
+        let limited = super::super::http_retry::rate_limited(response.headers());
+        if status.as_u16() == 429 {
+            return Err(limited);
+        }
+        let value = read_json(response).await?;
+        if !status.is_success() || code(&value) != 0 {
+            return Err(provider_error(status, code(&value), false));
+        }
+        if value["group_openid"].as_str() != Some(group) {
+            return Err(PortError::ScopeMismatch);
+        }
+        value["group_name"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty() && s.len() <= 512 && !s.chars().any(char::is_control))
+            .map(str::to_owned)
+            .ok_or(PortError::Unavailable)
+    }
     pub(super) async fn bot_info(&self, ctx: &OperationContext) -> Result<Value, PortError> {
         if ctx.scope != self.scope {
             return Err(PortError::ScopeMismatch);
@@ -367,7 +405,11 @@ mod tests {
                     |h: axum::http::HeaderMap, Json(v): Json<Value>| async move {
                         assert_eq!(h["authorization"], "QQBot test-token");
                         assert_eq!(v["msg_type"], 0);
-                        assert_eq!(v["msg_seq"], 1);
+                        if v["content"] == "proactive" {
+                            assert!(v.get("msg_id").is_none());
+                        } else {
+                            assert_eq!(v["msg_seq"], 1);
+                        }
                         Json(if v["content"] == "expired" {
                             json!({"code":40034005})
                         } else if v["content"] == "limited" {
@@ -386,6 +428,13 @@ mod tests {
                 assert_eq!(v["msg_id"], "trusted-reply");
                 assert_eq!(v["content"], "direct reply");
                 Json(json!({"id":"direct-sent"}))
+            }),
+        );
+        let app = app.route(
+            "/v2/groups/group_A/info",
+            axum::routing::get(|h: axum::http::HeaderMap| async move {
+                assert_eq!(h["authorization"], "QQBot test-token");
+                Json(json!({"group_openid":"group_A","group_name":"测试群"}))
             }),
         );
         let app = app.route(
@@ -445,6 +494,7 @@ mod tests {
             destination_id: id,
             message: message(json!({"payload":{"content":content,"msg_id":"original-message"}})),
         };
+        assert_eq!(sink.group_name("group_A").await.unwrap(), "测试群");
         let (a, b) = tokio::join!(
             sink.deliver(ctx.clone(), request("one")),
             sink.deliver(ctx.clone(), request("two"))
@@ -480,6 +530,7 @@ mod tests {
         assert_eq!(result.external_message_id.as_deref(), Some("direct-sent"));
         use crate::application::ports::connection_actions::ConnectionActions;
         use crate::domain::{connection_routing::RouteBinding, tool::ToolCall};
+        sink.config.allow_proactive = true;
         let actions = super::super::actions::QqActions {
             sink: Arc::new(sink),
             destination_id: id,
@@ -520,6 +571,27 @@ mod tests {
             "direct-sent"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let proactive = actions
+            .executor(Some(RouteBinding::new(
+                "qq",
+                json!({"app_id":"123456","kind":"group","id":"group_A"}),
+            )))
+            .unwrap();
+        let sent = proactive
+            .invoke(
+                ctx.clone(),
+                ToolCall {
+                    invocation_id: Uuid::new_v4(),
+                    tool_id: "qq.send_text".into(),
+                    arguments: json!({"content":"proactive"}),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            sent.structured_content.unwrap()["message_id"],
+            "sent-message"
+        );
         assert!(
             executor
                 .invoke(

@@ -18,11 +18,11 @@ pub struct Identity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     ManageWorkspace,
-    ReadAgentJobs,
-    ManageAgentJobs,
     UseProfile,
     InvokeTool,
     ReadMcpResource,
+    ReadMcpBuiltin,
+    InvokeMcpBuiltin,
     GetMcpPrompt,
     RouteEvent,
     DeliverMessage,
@@ -31,16 +31,17 @@ pub enum Action {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Resource {
-    AgentQueue {
-        workspace_id: Uuid,
-        profile_id: Uuid,
-    },
     Workspace {
         workspace_id: Uuid,
     },
     Profile {
         workspace_id: Uuid,
         profile_id: Uuid,
+    },
+    McpBuiltin {
+        workspace_id: Uuid,
+        profile_id: Uuid,
+        tool: super::builtin_tools::BuiltinTool,
     },
     McpResource {
         workspace_id: Uuid,
@@ -72,9 +73,9 @@ pub enum Resource {
 impl Resource {
     pub fn workspace_id(&self) -> Uuid {
         match self {
-            Self::AgentQueue { workspace_id, .. }
-            | Self::Workspace { workspace_id }
+            Self::Workspace { workspace_id }
             | Self::Profile { workspace_id, .. }
+            | Self::McpBuiltin { workspace_id, .. }
             | Self::McpResource { workspace_id, .. }
             | Self::McpPrompt { workspace_id, .. }
             | Self::ReplyRoute { workspace_id, .. } => *workspace_id,

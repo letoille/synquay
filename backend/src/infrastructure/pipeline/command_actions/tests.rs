@@ -107,6 +107,7 @@ impl Fixture {
             connection_id: Uuid::new_v4(),
         };
         let c = MessageConnection {
+            recent_messages: Default::default(),
             id: source.connection_id,
             name: "QQ".into(),
             description: String::new(),
@@ -187,6 +188,7 @@ impl Fixture {
             governance,
         );
         let event = EventEnvelope {
+            state_report: false,
             route_context: Some(RouteBinding::new(
                 "qq",
                 json!({"app_id":"12345","kind":"group","id":"group_A","msg_id":"trusted-message","sender_openid":"member_A"}),
@@ -490,16 +492,9 @@ async fn direct_reply_uses_trusted_source_without_invoking_a_capability() {
 async fn source_response_requires_a_supported_processor_and_source_destination() {
     let f = Fixture::new(true).await;
     let catalog = f.bindings.connections.read().unwrap();
-    for processor in [
-        RouteProcessor::Forward,
-        RouteProcessor::AgentHttp {
-            name: "Agent".into(),
-        },
-    ] {
-        let mut route = f.route.clone();
-        route.processor = Some(processor);
-        assert!(validate(&catalog, &route, f.event.scope.connection_id).is_err());
-    }
+    let mut route = f.route.clone();
+    route.processor = Some(RouteProcessor::Forward);
+    assert!(validate(&catalog, &route, f.event.scope.connection_id).is_err());
     let mut route = f.route.clone();
     route.processor = Some(RouteProcessor::Respond);
     route.targets[0].destination_id = Uuid::new_v4();

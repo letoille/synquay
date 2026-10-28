@@ -1,4 +1,4 @@
-import type { ChangeConnectionInput, AddConnectionInput, VerifyInput, Verification, ControlView, Draft, DraftInput, History, OperationResult, PublishInput, Receipt, Tool, McpServer, ServerChange, ServerDeletion, ServerAuth, ContentInventory } from './types';
+import type { ChangeConnectionInput, AddConnectionInput, VerifyInput, Verification, ControlView, Draft, DraftInput, History, OperationResult, PublishInput, Receipt, Tool, McpServer, ServerChange, ServerDeletion, ServerAuth, ContentInventory, BuiltinScope, ConversationGrant, BuiltinTool } from './types';
 
 export class ControlError extends Error {
   constructor(readonly status: number, readonly code: string, readonly requestId: string | null = null) {
@@ -68,7 +68,14 @@ function server(value: unknown): McpServer {
   const scope=r.content_scope===undefined?undefined:obj(r.content_scope);
   const content_scope=scope?{resources:names(scope.resources),prompts:names(scope.prompts)}:undefined;
   if(content_scope && (new Set(content_scope.resources).size!==content_scope.resources.length||new Set(content_scope.prompts).size!==content_scope.prompts.length)) return bad();
-  return {id, path, content_scope, content_revision:r.content_revision===undefined?undefined:integer(r.content_revision,0), auth: r.auth === undefined ? undefined : serverAuth(r.auth), description: r.description === undefined ? '' : str(r.description), transport: r.transport === undefined || r.transport === 'streamable_http' ? r.transport as 'streamable_http' | undefined : bad(), name: str(r.name), enabled: r.enabled as boolean, deleted: r.deleted as boolean, is_default: r.is_default as boolean,
+  let builtin_scope: BuiltinScope|undefined;
+  if (r.builtin_scope !== undefined) {
+    const b=obj(r.builtin_scope), tools=names(b.tools);
+    if (!tools.every(x=>['connections_list','connection_status','connection_statistics','recent_messages','qq_bot_info','qq_send_text'].includes(x)) || !Array.isArray(b.conversations) || b.conversations.length>100) return bad();
+    const parseGrants=(raw:unknown,send:boolean):ConversationGrant[]=>{if(!Array.isArray(raw)||raw.length>100)return bad();return raw.map(raw=>{const c=obj(raw),kind=str(c.kind);if(kind!=='group'&&kind!=='direct'&&(!(!send&&kind==='stream')))return bad();return {connection_id:str(c.connection_id),account:str(c.account),kind,conversation_id:str(c.conversation_id)};});};
+    builtin_scope={tools:tools as BuiltinTool[],connections:names(b.connections),conversations:parseGrants(b.conversations,false),qq_send_conversations:parseGrants(b.qq_send_conversations??[],true)};
+  }
+  return {id, path, content_scope, builtin_scope, content_revision:r.content_revision===undefined?undefined:integer(r.content_revision,0), auth: r.auth === undefined ? undefined : serverAuth(r.auth), description: r.description === undefined ? '' : str(r.description), transport: r.transport === undefined || r.transport === 'streamable_http' ? r.transport as 'streamable_http' | undefined : bad(), name: str(r.name), enabled: r.enabled as boolean, deleted: r.deleted as boolean, is_default: r.is_default as boolean,
     revision: integer(r.revision), tool_revision: integer(r.tool_revision), exposed_tools: names(r.exposed_tools), address: nullable(r.address), authentication: r.authentication as McpServer['authentication']};
 }
 /** Console client. Login credentials are not used in the current development phase. */
@@ -126,7 +133,7 @@ export function controlApi() {
 export type ControlApi = ReturnType<typeof controlApi>;
 export function errorMessage(error: unknown): string {
   if (!(error instanceof ControlError)) return '操作未完成，请重新查询状态。';
-  if (error.code === 'invalid_agent_http_target') return '请填写 Agent 名称并选择 HTTP 目标。';
+  if (error.code === 'invalid_message_types') return '请选择有效且不重复的消息类型。';
   if (error.code === 'route_source_selection_required') return '请选择接收会话范围。';
   if (error.code === 'route_target_selection_required') return '请选择发送目标。';
   if (error.code === 'reply_requires_same_connection') return '回复来源会话需要使用同一个连接。';

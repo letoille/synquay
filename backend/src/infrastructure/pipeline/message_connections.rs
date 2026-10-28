@@ -259,9 +259,6 @@ impl Pipeline {
         actor: Uuid,
         input: ConnectionInput,
     ) -> Result<u64, PortError> {
-        if self.agent.is_some() {
-            return Err(PortError::Unsupported);
-        }
         if actor.is_nil() || input.operation_id.is_nil() || input.connection_id.is_nil() {
             return Err(invalid("invalid_connection_id"));
         }
@@ -372,17 +369,6 @@ impl Pipeline {
                     }
                 }
             }
-            if let Some(c) = &input.connection
-                && !matches!(c.config, ConnectionConfig::HttpClient(_))
-                && routes.routes.iter().any(|r| {
-                    matches!(
-                        r.processor,
-                        Some(crate::domain::managed_route::RouteProcessor::AgentHttp { .. })
-                    ) && r.targets.iter().any(|t| t.destination_id == c.send_id())
-                })
-            {
-                return Err(invalid("invalid_agent_http_target"));
-            }
             if let Some(old)=&old {
                 let actions=input.connection.as_ref().map(|c|super::command_actions::definitions(&c.config)).unwrap_or_default();
                 let mut touched=false;
@@ -418,6 +404,18 @@ impl Pipeline {
                         .map(|c| (c.id, c.send_id())),
                 )
                 .await?;
+            p.store.configure_recent(ConnectionScope { workspace_id:p.source.workspace_id, connection_id:input.connection_id },
+                effective.as_ref().filter(|c| c.enabled).and_then(|c| c.recent_source().map(|source| (c.recent_messages.clone(), source))));
+            if old.as_ref().is_some_and(|prior| matches!(prior.config, ConnectionConfig::QqBot(_)))
+                && (input.secret.as_ref().is_some_and(|s| !s.is_empty()) || effective.as_ref().is_none_or(|next| !next.enabled || serde_json::to_value(&next.config).ok() != old.as_ref().and_then(|prior| serde_json::to_value(&prior.config).ok()))) {
+                p.qq_group_names.clear_connection(input.connection_id);
+            }
+            // Account, scope and transport changes invalidate the in-memory history.
+            if old.is_some()
+                && effective.as_ref().is_none_or(|next| !next.enabled || serde_json::to_value(&next.config).ok() != old.as_ref().and_then(|prior| serde_json::to_value(&prior.config).ok()))
+            {
+                p.store.clear_recent(ConnectionScope { workspace_id:p.source.workspace_id, connection_id:input.connection_id });
+            }
             let scope = ConnectionScope {
                 workspace_id: p.source.workspace_id,
                 connection_id: input

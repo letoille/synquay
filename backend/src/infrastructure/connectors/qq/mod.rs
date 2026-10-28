@@ -1,4 +1,5 @@
 //! QQ official group adapter. Credentials and destination scope are operator-owned.
+pub(crate) mod group_names;
 mod inbound;
 mod sink;
 use super::message_config::invalid;

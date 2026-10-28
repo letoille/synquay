@@ -84,7 +84,7 @@ SQLite v16 包含作用域主键、不可变操作审计回执和未完成来源
 
 ## 指令与自定义消息映射
 
-接收消息后，可在路由中按正文匹配指令，提取参数并生成 JSON，再发送至 MQTT、HTTP 或 Agent HTTP 接收端。配置、匹配规则及 MCP Agent 部署模式见 [消息指令映射](message-commands.md)。
+接收消息后，可在路由中按正文匹配指令，提取参数并生成 JSON，再发送至 MQTT 或 HTTP 接收端。配置和匹配规则见 [消息指令映射](message-commands.md)。
 
 ## QQ 官方机器人
 

@@ -49,6 +49,7 @@ fn config(path: std::path::PathBuf) -> ToolsConfig {
 }
 fn change(name: &str, auth: ServerAuth) -> ServerChange {
     ServerChange {
+        builtin_scope: None,
         operation_id: Uuid::new_v4(),
         expected_revision: 0,
         expected_tool_revision: 0,
@@ -315,6 +316,7 @@ async fn endpoint_auth_child() {
     ctx.identity = identity;
     assert!(rt.service.list(&ctx, basic).await.is_err());
     let update = ServerChange {
+        builtin_scope: None,
         expected_revision: 1,
         expected_tool_revision: 1,
         auth: Some(ServerAuth::Basic {
@@ -463,4 +465,68 @@ async fn endpoint_auth_child() {
     );
     astop.cancel();
     atask.await.unwrap();
+}
+
+#[tokio::test]
+async fn builtin_scopes_are_private_per_server_and_preserved_on_omission() {
+    use synquay_server::domain::builtin_tools::{BuiltinScope, BuiltinTool};
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path().join("db"));
+    let rt = ToolRuntime::build_with_secrets(
+        cfg.clone(),
+        "legacy-token-at-least-32-characters".into(),
+        vec![None],
+    )
+    .await
+    .unwrap();
+    let a = Uuid::new_v4();
+    let b = Uuid::new_v4();
+    let mut ca = change("A", ServerAuth::None);
+    ca.builtin_scope = Some(BuiltinScope {
+        tools: vec![BuiltinTool::ConnectionsList],
+        ..Default::default()
+    });
+    let first = rt.save_server(a, ca.clone()).await.unwrap();
+    assert_eq!(first["builtin_scope"]["tools"], json!(["connections_list"]));
+    let second = rt
+        .save_server(b, change("B", ServerAuth::None))
+        .await
+        .unwrap();
+    assert_eq!(second["builtin_scope"]["tools"], json!([]));
+    let update = ServerChange {
+        operation_id: Uuid::new_v4(),
+        expected_revision: 1,
+        expected_tool_revision: 1,
+        builtin_scope: None,
+        ..ca
+    };
+    let updated = rt.save_server(a, update).await.unwrap();
+    assert_eq!(
+        updated["builtin_scope"]["tools"],
+        json!(["connections_list"])
+    );
+    let mut invalid = change("Invalid", ServerAuth::None);
+    invalid.builtin_scope = Some(BuiltinScope {
+        tools: vec![BuiltinTool::ConnectionStatus],
+        connections: vec![Uuid::new_v4()],
+        conversations: vec![],
+        qq_send_conversations: vec![],
+    });
+    assert!(rt.save_server(Uuid::new_v4(), invalid).await.is_err());
+    drop(rt);
+    let restarted = ToolRuntime::build_with_secrets(
+        cfg,
+        "legacy-token-at-least-32-characters".into(),
+        vec![None],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        restarted.server_view(a).await.unwrap()["builtin_scope"]["tools"],
+        json!(["connections_list"])
+    );
+    assert_eq!(
+        restarted.server_view(b).await.unwrap()["builtin_scope"]["tools"],
+        json!([])
+    );
 }

@@ -42,7 +42,7 @@ impl SqliteStore {
             let record:String=c.query_row("SELECT record FROM connection_devices WHERE workspace=?1 AND connection=?2",params![scope.workspace_id.to_string(),scope.connection_id.to_string()],|r|r.get(0)).map_err(db_error)?;
             let conn:MessageConnection=decode(&record)?;
             let wrapped=matches!(&conn.config,ConnectionConfig::Mqtt(c) if c.subscription.as_ref().is_some_and(|s|s.include_metadata));
-            let event=EventEnvelope{event_id:Uuid::new_v4(),scope,event_type:"mqtt.reply".into(),schema_version:1,occurred_at:None,received_at:SystemTime::now(),source_event_id:None,correlation_id:Uuid::new_v4(),causation_id:None,route_trace:vec![],route_context:Some(crate::domain::connection_routing::RouteBinding::new("mqtt",json!({"topic":topic,"retain":false}))),payload:EventPayload::Json(if wrapped{json!({"payload":value})}else{value})};
+            let event=EventEnvelope{state_report:false,event_id:Uuid::new_v4(),scope,event_type:"mqtt.reply".into(),schema_version:1,occurred_at:None,received_at:SystemTime::now(),source_event_id:None,correlation_id:Uuid::new_v4(),causation_id:None,route_trace:vec![],route_context:Some(crate::domain::connection_routing::RouteBinding::new("mqtt",json!({"topic":topic,"retain":false}))),payload:EventPayload::Json(if wrapped{json!({"payload":value})}else{value})};
             let tx=c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;observe(&tx,&event)?;tx.commit().map_err(db_error)
         }).await
     }
@@ -85,34 +85,68 @@ impl SqliteStore {
         .await
     }
     pub async fn resource_states(&self, scope: ConnectionScope) -> Result<Value, PortError> {
-        self.run(move|c| {
-            let s:Option<String>=c.query_row("SELECT record FROM connection_devices WHERE workspace=?1 AND connection=?2",params![scope.workspace_id.to_string(),scope.connection_id.to_string()],|r|r.get(0)).optional().map_err(db_error)?;
-            let conn:MessageConnection=decode(&s.ok_or(PortError::NotFound)?)?;
-            let ConnectionConfig::Mqtt(config)=conn.config else{return Err(PortError::Unsupported)};
-            let now=millis(SystemTime::now())?; let mut result=serde_json::Map::new();
-            for resource in config.capabilities.resources {
-                let mut groups=serde_json::Map::new();
-                for group in resource.groups {
-                let mut q=c.prepare("SELECT field,value,received_ms,source_ms,retained FROM resource_state WHERE workspace=?1 AND connection=?2 AND resource=?3 AND state_group=?4").map_err(db_error)?;
-                let rows=q.query_map(params![scope.workspace_id.to_string(),scope.connection_id.to_string(),resource.id,group.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<i64>>(3)?,r.get::<_,bool>(4)?))).map_err(db_error)?;
-                let mut fields=serde_json::Map::new();
-                for row in rows {let (key,value,received,source,retained)=row.map_err(db_error)?;let age=now.saturating_sub(source.unwrap_or(received)).max(0) as u64;
-                    fields.insert(key,json!({"value":decode::<Value>(&value)?,"received_at_ms":received,"source_at_ms":source,"origin":if retained{"retained"}else{"live"},"freshness":if retained&&source.is_none(){"unknown"}else if !conn.enabled||(group.max_age_ms>0&&age>group.max_age_ms){"stale"}else{"fresh"}}));
-                }
-                for f in &group.fields {fields.entry(f.name.clone()).or_insert(json!({"value":null,"freshness":"unknown"}));}
-                groups.insert(group.id,json!({"name":group.name,"fields":fields}));
-                }
-                result.insert(resource.id,json!({"name":resource.name,"groups":groups}));
+        use crate::application::ports::connection_data::{ConnectionStateReader, StateQuery};
+        let snapshot = self
+            .read_connection_state(StateQuery {
+                scope,
+                resource: None,
+                group: None,
+            })
+            .await?;
+        serde_json::to_value(snapshot).map_err(|_| PortError::Unavailable)
+    }
+}
+
+impl crate::application::ports::connection_data::ConnectionStateReader for SqliteStore {
+    fn read_connection_state(
+        &self,
+        query: crate::application::ports::connection_data::StateQuery,
+    ) -> crate::application::ports::PortFuture<
+        '_,
+        crate::application::ports::connection_data::StateSnapshot,
+    > {
+        use crate::application::ports::connection_data::{
+            Freshness, StateField, StateGroup, StateOrigin, StateResource,
+        };
+        Box::pin(self.run(move |c| {
+            if query.group.is_some() && query.resource.is_none() { return Err(PortError::InvalidInput { code: "state_group_requires_resource" }); }
+            if query.resource.as_ref().is_some_and(|s| s.is_empty() || s.len() > 128) || query.group.as_ref().is_some_and(|s| s.is_empty() || s.len() > 128) { return Err(PortError::InvalidInput { code: "invalid_state_query" }); }
+            let scope = query.scope;
+            // Read the connection definition and all fields from one SQLite snapshot.
+            let tx = c.transaction_with_behavior(TransactionBehavior::Deferred).map_err(db_error)?;
+            let record:Option<String>=tx.query_row("SELECT record FROM connection_devices WHERE workspace=?1 AND connection=?2",params![scope.workspace_id.to_string(),scope.connection_id.to_string()],|r|r.get(0)).optional().map_err(db_error)?;
+            let conn:MessageConnection=decode(&record.ok_or(PortError::NotFound)?)?;
+            let ConnectionConfig::Mqtt(config)=conn.config else {return Err(PortError::Unsupported)};
+            if let Some(resource) = &query.resource {
+                let found = config.capabilities.resources.iter().find(|r| &r.id == resource).ok_or(PortError::NotFound)?;
+                if query.group.as_ref().is_some_and(|group| !found.groups.iter().any(|g| &g.id == group)) { return Err(PortError::NotFound); }
             }
-            Ok(Value::Object(result))
-        }).await
+            let now=millis(SystemTime::now())?;
+            let mut result = std::collections::BTreeMap::new();
+            for resource in config.capabilities.resources.into_iter().filter(|r| query.resource.as_ref().is_none_or(|id| *id==r.id)) {
+                let mut groups=std::collections::BTreeMap::new();
+                for group in resource.groups.into_iter().filter(|g| query.group.as_ref().is_none_or(|id| *id==g.id)) {
+                    let mut q=tx.prepare("SELECT field,value,received_ms,source_ms,retained FROM resource_state WHERE workspace=?1 AND connection=?2 AND resource=?3 AND state_group=?4").map_err(db_error)?;
+                    let rows=q.query_map(params![scope.workspace_id.to_string(),scope.connection_id.to_string(),resource.id,group.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<i64>>(3)?,r.get::<_,bool>(4)?))).map_err(db_error)?;
+                    let mut fields=std::collections::BTreeMap::new();
+                    for row in rows { let (key,value,received,source,retained)=row.map_err(db_error)?;let age=now.saturating_sub(source.unwrap_or(received)).max(0) as u64;
+                        fields.insert(key,StateField { value:decode(&value)?,received_at_ms:Some(received),source_at_ms:Some(source),origin:Some(if retained {StateOrigin::Retained}else{StateOrigin::Live}),freshness:if retained && source.is_none(){Freshness::Unknown}else if !conn.enabled || (group.max_age_ms>0 && age>group.max_age_ms){Freshness::Stale}else{Freshness::Fresh} });
+                    }
+                    for field in &group.fields { fields.entry(field.name.clone()).or_insert(StateField{value:Value::Null,received_at_ms:None,source_at_ms:None,origin:None,freshness:Freshness::Unknown}); }
+                    groups.insert(group.id,StateGroup { name:group.name,fields });
+                }
+                result.insert(resource.id,StateResource{name:resource.name,groups});
+            }
+            tx.commit().map_err(db_error)?;
+            Ok(result)
+        }))
     }
 }
 
 pub(super) fn observe(
     tx: &rusqlite::Transaction<'_>,
     event: &EventEnvelope,
-) -> Result<(), PortError> {
+) -> Result<bool, PortError> {
     let scope = event.scope;
     let w = scope.workspace_id.to_string();
     let c = scope.connection_id.to_string();
@@ -124,21 +158,23 @@ pub(super) fn observe(
         )
         .optional()
         .map_err(db_error)?;
-    let Some(record) = record else { return Ok(()) };
+    let Some(record) = record else {
+        return Ok(false);
+    };
     let conn: MessageConnection = decode(&record)?;
     if !conn.enabled {
-        return Ok(());
+        return Ok(false);
     }
     let ConnectionConfig::Mqtt(config) = conn.config else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(context) = event.route_context.as_ref().filter(|r| r.adapter == "mqtt") else {
-        return Ok(());
+        return Ok(false);
     };
     let topic = context.config["topic"].as_str().unwrap_or("");
     let retained = context.config["retain"].as_bool().unwrap_or(true);
     let EventPayload::Json(value) = &event.payload else {
-        return Ok(());
+        return Ok(false);
     };
     let value = if config
         .subscription
@@ -150,6 +186,7 @@ pub(super) fn observe(
         value
     };
     let received = millis(event.received_at)?;
+    let mut matched = false;
     for resource in &config.capabilities.resources {
         for r in &resource.groups {
             if r.topic != topic
@@ -157,21 +194,6 @@ pub(super) fn observe(
                     .as_ref()
                     .is_some_and(|i| value.pointer(&i.pointer) != Some(&i.value))
             {
-                continue;
-            }
-            let source = match &r.source_time_pointer {
-                Some(p) => match value.pointer(p).and_then(Value::as_i64) {
-                    Some(t) if t >= 0 && t <= received => Some(t),
-                    _ => continue,
-                },
-                None => None,
-            };
-            // Retained data without a device timestamp cannot overwrite live observations.
-            let latest:Option<i64>=tx.query_row("SELECT max(coalesce(source_ms,received_ms)) FROM resource_state WHERE workspace=?1 AND connection=?2 AND resource=?3 AND state_group=?4",params![w,c,resource.id,r.id],|row|row.get(0)).map_err(db_error)?;
-            if source.is_some_and(|s| latest.is_some_and(|l| s < l)) {
-                continue;
-            }
-            if retained && source.is_none() && latest.is_some() {
                 continue;
             }
             let mut mapped = Vec::new();
@@ -202,6 +224,22 @@ pub(super) fn observe(
             if mapped.is_empty() {
                 continue;
             }
+            matched = true;
+            let source = match &r.source_time_pointer {
+                Some(p) => match value.pointer(p).and_then(Value::as_i64) {
+                    Some(t) if t >= 0 && t <= received => Some(t),
+                    _ => continue,
+                },
+                None => None,
+            };
+            // Retained data without a device timestamp cannot overwrite live observations.
+            let latest:Option<i64>=tx.query_row("SELECT max(coalesce(source_ms,received_ms)) FROM resource_state WHERE workspace=?1 AND connection=?2 AND resource=?3 AND state_group=?4",params![w,c,resource.id,r.id],|row|row.get(0)).map_err(db_error)?;
+            if source.is_some_and(|s| latest.is_some_and(|l| s < l)) {
+                continue;
+            }
+            if retained && source.is_none() && latest.is_some() {
+                continue;
+            }
             if r.replace {
                 tx.execute("DELETE FROM resource_state WHERE workspace=?1 AND connection=?2 AND resource=?3 AND state_group=?4",params![w,c,resource.id,r.id]).map_err(db_error)?;
             }
@@ -211,7 +249,7 @@ pub(super) fn observe(
             tracing::debug!(event="resource.state_updated",connection_id=%scope.connection_id,resource=%resource.id,state_group=%r.id);
         }
     }
-    Ok(())
+    Ok(matched)
 }
 
 /// Invalidate observations when their definition or transport changes; never relabel old data.

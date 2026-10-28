@@ -27,6 +27,9 @@ pub struct IncomingEvent {
 /// Internal model, not the public wire schema or storage representation.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EventEnvelope {
+    /// Set by trusted state mapping during durable ingestion, not by the sender.
+    #[serde(default)]
+    pub state_report: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_context: Option<super::connection_routing::RouteBinding>,
     pub event_id: Uuid,

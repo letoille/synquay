@@ -134,10 +134,10 @@ impl Pipeline {
             .await?;
         Ok(RoutesView {
             matched,
-            available: self.agent.is_none(),
+            available: true,
             supports_processors: true,
             supports_commands: true,
-            reason: self.agent.as_ref().map(|_| "agent_pipeline"),
+            reason: None,
             source_id: self.source.connection_id,
             source_address: format!("/api/webhooks/{}", self.source.connection_id),
             targets: self.all_targets(),
@@ -159,9 +159,6 @@ impl Pipeline {
         actor: Uuid,
         input: RouteInput,
     ) -> Result<RouteReceipt, PortError> {
-        if self.agent.is_some() {
-            return Err(PortError::Unsupported);
-        }
         if actor.is_nil() || input.operation_id.is_nil() || input.route_id.is_nil() {
             return Err(PortError::InvalidInput {
                 code: "invalid_route_id",
@@ -199,6 +196,7 @@ impl Pipeline {
             next.revision = next.revision.checked_add(1).ok_or(PortError::Conflict)?;
             match &input.change {
                 RouteChange::Save {
+                    message_types,
                     response,
                     name,
                     enabled,
@@ -233,6 +231,18 @@ impl Pipeline {
                             code: "invalid_route",
                         });
                     }
+                    if message_types.is_empty()
+                        || message_types.len() > 3
+                        || message_types
+                            .iter()
+                            .collect::<std::collections::HashSet<_>>()
+                            .len()
+                            != message_types.len()
+                    {
+                        return Err(PortError::InvalidInput {
+                            code: "invalid_message_types",
+                        });
+                    }
                     if let Some(Some(command)) = command {
                         command.validate().map_err(|_| PortError::InvalidInput {
                             code: "invalid_command_mapping",
@@ -254,31 +264,6 @@ impl Pipeline {
                             code: "unknown_route_source",
                         });
                     }
-                    if let Some(RouteProcessor::AgentDraft { name }) = &processor
-                        && (*enabled
-                            || name.trim().is_empty()
-                            || name.len() > 120
-                            || name.chars().any(char::is_control))
-                    {
-                        return Err(PortError::InvalidInput {
-                            code: "agent_executor_not_configured",
-                        });
-                    }
-                    if let Some(RouteProcessor::AgentHttp { name }) = &processor
-                        && (name.trim().is_empty()
-                            || name.len() > 120
-                            || name.chars().any(char::is_control)
-                            || destination_ids.iter().any(|id| {
-                                !pipeline
-                                    .all_targets()
-                                    .iter()
-                                    .any(|t| t.destination_id == *id && t.protocol == "HTTP")
-                            }))
-                    {
-                        return Err(PortError::InvalidInput {
-                            code: "invalid_agent_http_target",
-                        });
-                    }
                     let targets = destination_ids
                         .iter()
                         .map(|destination_id| RouteTarget {
@@ -294,6 +279,7 @@ impl Pipeline {
                         })
                         .collect();
                     let route = ManagedRoute {
+                        message_types: message_types.clone(),
                         response: response.or_else(|| previous.and_then(|r| r.response)),
                         routing: routing
                             .as_deref()

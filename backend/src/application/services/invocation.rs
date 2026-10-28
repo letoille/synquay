@@ -34,6 +34,108 @@ pub struct InvocationService {
     pub ledger: Option<Arc<dyn InvocationLedger>>,
 }
 impl InvocationService {
+    /// Read sensitive, volatile data without placing the result in the durable ledger.
+    /// Intended only for trusted, explicitly selected built-in read-only operations.
+    pub async fn invoke_ephemeral_read(
+        &self,
+        ctx: &AccessContext,
+        request: InvocationRequest,
+    ) -> Result<ToolInvocationReport, PortError> {
+        let resource = Resource::Tool {
+            scope: request.scope,
+            tool_id: request.definition.id.clone(),
+        };
+        self.invoke_ephemeral(ctx, request, Action::InvokeTool, resource)
+            .await
+    }
+
+    /// Built-in queries use a distinct policy resource and never persist results.
+    pub async fn invoke_ephemeral_builtin(
+        &self,
+        ctx: &AccessContext,
+        request: InvocationRequest,
+        profile_id: Uuid,
+        tool: crate::domain::builtin_tools::BuiltinTool,
+    ) -> Result<ToolInvocationReport, PortError> {
+        if request.definition.id != tool.name() {
+            return Err(PortError::PermissionDenied);
+        }
+        let resource = Resource::McpBuiltin {
+            workspace_id: request.scope.workspace_id,
+            profile_id,
+            tool,
+        };
+        self.invoke_ephemeral(ctx, request, Action::ReadMcpBuiltin, resource)
+            .await
+    }
+
+    async fn invoke_ephemeral(
+        &self,
+        ctx: &AccessContext,
+        request: InvocationRequest,
+        action: Action,
+        resource: Resource,
+    ) -> Result<ToolInvocationReport, PortError> {
+        use crate::domain::tool::ToolEffect;
+        if request.definition.effect != ToolEffect::ReadOnly {
+            return Err(PortError::PermissionDenied);
+        }
+        self.governance.authorize(ctx, action, &resource).await?;
+        self.validator
+            .validate(&request.definition.input_schema, &request.arguments)
+            .await?;
+        self.governance
+            .record(
+                ctx,
+                request.invocation_id,
+                action,
+                &resource,
+                AuditPhase::Started,
+            )
+            .await?;
+        // Permissions can change while validation and audit storage are pending.
+        self.governance.authorize(ctx, action, &resource).await?;
+        ctx.check()?;
+        let mut operation = ctx.operation.clone();
+        operation.scope = request.scope;
+        let mut outcome = request
+            .executor
+            .invoke(
+                operation,
+                ToolCall {
+                    invocation_id: request.invocation_id,
+                    tool_id: request.definition.id,
+                    arguments: request.arguments,
+                },
+            )
+            .await;
+        if let (Ok(result), Some(schema)) = (&outcome, &request.definition.output_schema)
+            && match &result.structured_content {
+                Some(value) => self.validator.validate(schema, value).await.is_err(),
+                None => true,
+            }
+        {
+            outcome = Err(PortError::Failed {
+                code: "invalid_tool_output",
+            });
+        }
+        // Never return a result after membership or access has been revoked.
+        self.governance.authorize(ctx, action, &resource).await?;
+        let phase = if outcome.as_ref().is_ok_and(|result| !result.is_error) {
+            AuditPhase::Succeeded
+        } else {
+            AuditPhase::Failed
+        };
+        // Fail closed: sensitive output is not released if its audit cannot be saved.
+        self.governance
+            .record(ctx, request.invocation_id, action, &resource, phase)
+            .await?;
+        Ok(ToolInvocationReport {
+            outcome,
+            audit_recorded: true,
+        })
+    }
+
     pub async fn invoke(
         &self,
         ctx: &AccessContext,
@@ -43,9 +145,37 @@ impl InvocationService {
             scope: request.scope,
             tool_id: request.definition.id.clone(),
         };
-        self.governance
-            .authorize(ctx, Action::InvokeTool, &resource)
-            .await?;
+        self.invoke_with_resource(ctx, request, Action::InvokeTool, resource)
+            .await
+    }
+    pub async fn invoke_builtin_action(
+        &self,
+        ctx: &AccessContext,
+        request: InvocationRequest,
+        profile_id: Uuid,
+        tool: crate::domain::builtin_tools::BuiltinTool,
+    ) -> Result<ToolInvocationReport, PortError> {
+        if request.definition.id != tool.name()
+            || tool != crate::domain::builtin_tools::BuiltinTool::QqSendText
+        {
+            return Err(PortError::PermissionDenied);
+        }
+        let resource = Resource::McpBuiltin {
+            workspace_id: request.scope.workspace_id,
+            profile_id,
+            tool,
+        };
+        self.invoke_with_resource(ctx, request, Action::InvokeMcpBuiltin, resource)
+            .await
+    }
+    async fn invoke_with_resource(
+        &self,
+        ctx: &AccessContext,
+        request: InvocationRequest,
+        action: Action,
+        resource: Resource,
+    ) -> Result<ToolInvocationReport, PortError> {
+        self.governance.authorize(ctx, action, &resource).await?;
         self.validator
             .validate(&request.definition.input_schema, &request.arguments)
             .await?;
@@ -73,7 +203,7 @@ impl InvocationService {
             .record(
                 ctx,
                 request.invocation_id,
-                Action::InvokeTool,
+                action,
                 &resource,
                 AuditPhase::Started,
             )
@@ -82,11 +212,7 @@ impl InvocationService {
         let mut operation = ctx.operation.clone();
         operation.scope = request.scope;
         // Recheck membership and current grants after admission/audit awaits, before dispatch.
-        let mut outcome = match self
-            .governance
-            .authorize(ctx, Action::InvokeTool, &resource)
-            .await
-        {
+        let mut outcome = match self.governance.authorize(ctx, action, &resource).await {
             Ok(()) => {
                 request
                     .executor
@@ -130,7 +256,7 @@ impl InvocationService {
                         request_id: ctx.operation.request_id,
                         workspace_id: ctx.identity.workspace_id,
                         principal_id: ctx.identity.principal_id,
-                        action: Action::InvokeTool,
+                        action: action,
                         resource,
                         phase,
                         occurred_at: std::time::SystemTime::now(),
@@ -140,13 +266,7 @@ impl InvocationService {
                 .is_ok()
         } else {
             self.governance
-                .record(
-                    ctx,
-                    request.invocation_id,
-                    Action::InvokeTool,
-                    &resource,
-                    phase,
-                )
+                .record(ctx, request.invocation_id, action, &resource, phase)
                 .await
                 .is_ok()
         };

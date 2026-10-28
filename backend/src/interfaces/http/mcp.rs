@@ -27,9 +27,9 @@ struct VerifiedIdentity(crate::domain::identity::Identity);
 #[derive(Clone)]
 struct Handler {
     runtime: Arc<ToolRuntime>,
+    pipeline: Option<Arc<crate::infrastructure::pipeline::Pipeline>>,
     profile_id: Uuid,
     name: String,
-    extras: bool,
     content: crate::application::services::mcp_content::McpContentService,
 }
 fn rpc_error(error: impl std::fmt::Display) -> ErrorData {
@@ -253,14 +253,24 @@ impl ServerHandler for Handler {
                 tool
             })
             .collect();
-        if self.extras
-            && let Some(agent) = &self.runtime.agent
-        {
-            tools.extend(
-                super::agent_tools::list(agent, &ctx)
-                    .await
-                    .map_err(rpc_error)?,
-            );
+        if let Some(pipeline) = &self.pipeline {
+            let (revision, builtins) = self
+                .runtime
+                .list_builtins(&ctx, self.profile_id, pipeline)
+                .await
+                .map_err(rpc_error)?;
+            for d in builtins {
+                let mut tool = Tool::default();
+                tool.name = format!("{}__s{}", d.id, revision).into();
+                tool.description = Some(d.description.into());
+                tool.input_schema =
+                    Arc::new(d.input_schema.as_object().cloned().unwrap_or_default());
+                tool.annotations = Some(ToolAnnotations::new().read_only(matches!(
+                    d.effect,
+                    crate::domain::tool::ToolEffect::ReadOnly
+                )));
+                tools.push(tool);
+            }
         }
         Ok(ListToolsResult {
             tools,
@@ -273,23 +283,58 @@ impl ServerHandler for Handler {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         self.check(&context)?;
-        if super::agent_tools::is_builtin(&request.name) {
-            self.check_extras()?;
-            let Some(agent) = &self.runtime.agent else {
-                return Err(rpc_error("agent queue is not enabled"));
+        if let Some((name, revision)) = request.name.rsplit_once("__s")
+            && name.starts_with("synquay_builtin_")
+        {
+            let revision = revision
+                .parse()
+                .map_err(|_| rpc_error("invalid revision"))?;
+            let pipeline = self
+                .pipeline
+                .clone()
+                .ok_or_else(|| rpc_error("built-in tools unavailable"))?;
+            let meta = serde_json::to_value(&context.meta).map_err(rpc_error)?;
+            let invocation_id = match meta.get("synquay/invocation-id") {
+                Some(value) => value
+                    .as_str()
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .filter(|id| !id.is_nil())
+                    .ok_or_else(|| rpc_error("invalid invocation UUID"))?,
+                None => Uuid::new_v4(),
             };
-            let result = super::agent_tools::call(
-                agent,
-                &self.access(&context),
-                &request.name,
-                serde_json::Value::Object(request.arguments.unwrap_or_default()),
-            )
-            .await;
-            return Ok(match result {
-                Ok(v) => CallToolResult::structured(v),
-                Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
-            }
-            .into());
+            let ctx = self.access(&context);
+            let report = self
+                .runtime
+                .call_builtin(
+                    &ctx,
+                    self.profile_id,
+                    pipeline,
+                    name,
+                    revision,
+                    invocation_id,
+                    serde_json::Value::Object(request.arguments.unwrap_or_default()),
+                )
+                .await;
+            let audit_recorded = report.as_ref().ok().map(|r| r.audit_recorded);
+            let mut result = match report {
+                Ok(report) => match report.outcome {
+                    Ok(value) => {
+                        let mut result = CallToolResult::structured(
+                            value.structured_content.unwrap_or(serde_json::json!({})),
+                        );
+                        result.is_error = Some(value.is_error);
+                        result
+                    }
+                    Err(error) => {
+                        CallToolResult::error(vec![ContentBlock::text(error.to_string())])
+                    }
+                },
+                Err(_) => CallToolResult::error(vec![ContentBlock::text(
+                    "built-in query unavailable or not authorized",
+                )]),
+            };
+            result.meta = Some(serde_json::from_value(serde_json::json!({"synquay/invocation-id":invocation_id,"synquay/audit-recorded":audit_recorded})).map_err(rpc_error)?);
+            return Ok(result.into());
         }
         let (name, revision) = request
             .name
@@ -351,13 +396,6 @@ impl ServerHandler for Handler {
     }
 }
 impl Handler {
-    fn check_extras(&self) -> Result<(), ErrorData> {
-        if self.extras {
-            Ok(())
-        } else {
-            Err(rpc_error("agent jobs are not configured for this endpoint"))
-        }
-    }
     fn check_page(
         &self,
         ctx: &RequestContext<RoleServer>,
@@ -508,7 +546,13 @@ async fn guard(
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
     }
 }
-async fn dispatch(State(runtime): State<Arc<ToolRuntime>>, request: Request) -> Response {
+async fn dispatch(
+    State(runtime): State<Arc<ToolRuntime>>,
+    axum::Extension(pipeline): axum::Extension<
+        Option<Arc<crate::infrastructure::pipeline::Pipeline>>,
+    >,
+    request: Request,
+) -> Response {
     use tower::ServiceExt;
     let Some(endpoint) = request
         .extensions()
@@ -521,9 +565,9 @@ async fn dispatch(State(runtime): State<Arc<ToolRuntime>>, request: Request) -> 
     let handler = Handler {
         content: runtime.endpoint_content(&endpoint),
         runtime: runtime.clone(),
+        pipeline,
         profile_id: id,
         name: endpoint.name,
-        extras: id == runtime.config.profile_id,
     };
     let service = StreamableHttpService::new(
         move || Ok(handler.clone()),
@@ -539,12 +583,16 @@ async fn dispatch(State(runtime): State<Arc<ToolRuntime>>, request: Request) -> 
         .await
         .unwrap()
 }
-pub fn router(runtime: Arc<ToolRuntime>) -> Router {
+pub fn router(
+    runtime: Arc<ToolRuntime>,
+    pipeline: Option<Arc<crate::infrastructure::pipeline::Pipeline>>,
+) -> Router {
     let mcp = Router::new()
         .route("/mcp", any(dispatch))
         .route("/mcp/", any(dispatch))
         .route("/mcp/{id}", any(dispatch))
         .layer(middleware::from_fn_with_state(runtime.clone(), guard))
+        .layer(axum::Extension(pipeline))
         .with_state(runtime.clone());
     let discovery = Router::new()
         .route("/.well-known/oauth-protected-resource/mcp", get(metadata))

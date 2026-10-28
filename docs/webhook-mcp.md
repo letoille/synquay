@@ -19,9 +19,8 @@
 | 资源订阅、目录变化推送、事件推送 | 尚未实现，也不声明 subscribe/listChanged 能力 |
 | Sampling、Elicitation、Tasks、MRTR、logging/setLevel | 尚未实现 |
 | 图片/音频/二进制资源 | 尚未实现；当前资源提供器为静态内容 |
-| Agent 收件箱 | 已通过业务 tools 实现，见 [收件箱说明](agent-inbox.md) |
 
-协议端到端测试使用官方 Rust SDK 客户端，覆盖 2025-11-25 initialize 和 2026-07-28 discover。尚未完成 ChatGPT 公网客户端联调。收到 webhook 不会因此自动唤醒 ChatGPT；现已补上 [Inbox 与来源适配器回复闭环](agent-inbox.md)；持续自动分析仍需要独立 Agent Worker。
+协议端到端测试使用官方 Rust SDK 客户端，覆盖 2025-11-25 initialize 和 2026-07-28 discover。尚未完成 ChatGPT 公网客户端联调。收到 webhook 不会因此自动唤醒 ChatGPT；自动处理需要独立运行的外部服务。
 
 ## Webhook 配置与签名
 

@@ -9,6 +9,4 @@ pub mod workspaces;
 
 pub mod mcp_content;
 
-pub mod agent;
-
 pub mod invocation;

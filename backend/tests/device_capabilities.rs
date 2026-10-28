@@ -100,6 +100,60 @@ async fn grouped_state_projection_survives_restart_and_publication() {
     report(&s, &c, json!({"power":42}), 0, false).await;
     report(&s, &c, json!({"key":0}), 0, true).await;
     let v = t.device_states(c.id).await.unwrap();
+    {
+        use synquay_server::application::ports::connection_data::{
+            ConnectionStateReader, StateQuery,
+        };
+        let scope = ConnectionScope {
+            workspace_id: Uuid::from_u128(1),
+            connection_id: c.id,
+        };
+        let selected = s
+            .read_connection_state(StateQuery {
+                scope,
+                resource: Some("switch".into()),
+                group: Some("power".into()),
+            })
+            .await
+            .unwrap();
+        let output = serde_json::to_value(selected).unwrap();
+        assert!(output["switch"]["groups"].get("basic").is_none());
+        assert_eq!(
+            output["switch"]["groups"]["power"]["fields"]["watts"]["value"],
+            v["switch"]["groups"]["power"]["fields"]["watts"]["value"]
+        );
+        assert!(
+            s.read_connection_state(StateQuery {
+                scope,
+                resource: Some("unknown".into()),
+                group: None
+            })
+            .await
+            .is_err()
+        );
+        assert!(
+            s.read_connection_state(StateQuery {
+                scope,
+                resource: Some("switch".into()),
+                group: Some("unknown".into())
+            })
+            .await
+            .is_err()
+        );
+        let other = ConnectionScope {
+            workspace_id: Uuid::new_v4(),
+            connection_id: c.id,
+        };
+        assert!(
+            s.read_connection_state(StateQuery {
+                scope: other,
+                resource: None,
+                group: None
+            })
+            .await
+            .is_err()
+        );
+    }
     assert_eq!(
         v["switch"]["groups"]["basic"]["fields"]["mac"]["freshness"],
         "fresh"
@@ -421,4 +475,215 @@ async fn qq_command_routes_to_mqtt_action_with_original_conversation_reply() {
             .iter()
             .any(|r| r.id == id)
     );
+}
+
+#[tokio::test]
+async fn state_reports_update_without_forwarding_unless_route_explicitly_includes_them() {
+    use synquay_server::application::ports::routing::EventReader;
+    use tokio_util::sync::CancellationToken;
+    let (_dir, p, t, s, c, _) = setup(1883).await;
+    let view = p.routes_view().await.unwrap();
+    let destination = view
+        .targets
+        .iter()
+        .find(|d| d.connection_id != c.id)
+        .unwrap()
+        .destination_id;
+    let default_route = Uuid::new_v4();
+    let explicit_route = Uuid::new_v4();
+    for (index, id) in [(0, default_route), (1, explicit_route)] {
+        let mut raw = json!({"operation_id":Uuid::new_v4(),"expected_revision":view.snapshot.revision+index,"route_id":id,"change":{"kind":"save","name":format!("route-{index}"),"enabled":true,"source_id":c.id,"event_type":null,"destination_ids":[destination]}});
+        if index == 1 {
+            raw["change"]["message_types"] = json!(["message", "state", "command"]);
+        }
+        let input = serde_json::from_value(raw).unwrap();
+        p.change_route(Uuid::from_u128(10), input).await.unwrap();
+    }
+    let scope = ConnectionScope {
+        workspace_id: p.source.workspace_id,
+        connection_id: c.id,
+    };
+    let mut state = event(scope);
+    state.source_event_id = Some("state-1".into());
+    state.route_context = Some(RouteBinding::new(
+        "mqtt",
+        json!({"topic":"home/switch/pub","retain":false}),
+    ));
+    state.payload = EventPayload::Json(json!({"payload":{"key":1,"power":42}}));
+    let replay = state.clone();
+    let state_id = s.append(state).await.unwrap().event_id;
+    assert_eq!(s.append(replay).await.unwrap().event_id, state_id);
+    assert!(s.load(scope, state_id).await.unwrap().state_report);
+    assert_eq!(
+        t.device_states(c.id).await.unwrap()["switch"]["groups"]["power"]["fields"]["on"]["value"],
+        true
+    );
+    let mut normal = event(scope);
+    normal.source_event_id = Some("normal-1".into());
+    normal.route_context = Some(RouteBinding::new(
+        "mqtt",
+        json!({"topic":"home/switch/pub","retain":false}),
+    ));
+    normal.payload = EventPayload::Json(json!({"payload":{"other":"notice"}}));
+    let normal_id = s.append(normal).await.unwrap().event_id;
+    assert!(!s.load(scope, normal_id).await.unwrap().state_report);
+    p.tick(&CancellationToken::new()).await.unwrap();
+    let view = p.routes_view().await.unwrap();
+    assert_eq!(view.matched.get(&default_route).copied().unwrap_or(0), 1);
+    assert_eq!(view.matched.get(&explicit_route).copied().unwrap_or(0), 2);
+}
+
+#[tokio::test]
+async fn connection_catalog_is_shared_by_routes_and_mcp_without_exposing_secrets() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use synquay_server::{
+        AppState, application::ports::connection_actions::ConnectionCapabilityCatalog,
+    };
+    use tower::ServiceExt;
+    let (_dir, p, t, _, mqtt, _) = setup(1883).await;
+    let catalog = mqtt.capabilities();
+    assert!(catalog.messages.receive && catalog.messages.send);
+    assert!(!catalog.messages.recent_text_cache);
+    assert_eq!(catalog.resources[0].id, "switch");
+    assert_eq!(catalog.resources[0].groups[1].fields[0].name, "on");
+    assert_eq!(
+        serde_json::to_value(catalog.resources[0].groups[1].fields[0].value_type).unwrap(),
+        "boolean"
+    );
+    assert_eq!(
+        catalog.resources[0]
+            .query_operation
+            .as_ref()
+            .map(|action| action.definition.id.as_str()),
+        Some("state_switch")
+    );
+    let ids: Vec<_> = catalog
+        .operations
+        .iter()
+        .map(|a| a.definition.id.clone())
+        .chain(catalog.resources.iter().filter_map(|resource| {
+            resource
+                .query_operation
+                .as_ref()
+                .map(|action| action.definition.id.clone())
+        }))
+        .collect();
+    let routes = p.routes_view().await.unwrap();
+    let route_actions = &routes
+        .targets
+        .iter()
+        .find(|target| target.owner_connection_id == Some(mqtt.id))
+        .unwrap()
+        .actions;
+    assert_eq!(
+        ids,
+        route_actions
+            .iter()
+            .map(|a| a.definition.id.clone())
+            .collect::<Vec<_>>()
+    );
+    let control = t.control_view().await.unwrap();
+    for id in &ids {
+        assert!(
+            control["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["connection_id"] == mqtt.id.to_string() && v["definition"]["id"] == *id)
+        );
+    }
+    let qq:MessageConnection=serde_json::from_value(json!({"id":Uuid::new_v4(),"name":"Bot","enabled":true,"config":{"kind":"qq_bot","app_id":"123456","group_openid":"","allowed_senders":[],"allow_proactive":false}})).unwrap();
+    p.change_connection(
+        Uuid::from_u128(10),
+        ConnectionInput {
+            secret: Some(TOKEN.into()),
+            operation_id: Uuid::new_v4(),
+            expected_revision: 1,
+            connection_id: qq.id,
+            connection: Some(qq.clone()),
+        },
+    )
+    .await
+    .unwrap();
+    let capabilities = qq.capabilities();
+    assert!(capabilities.messages.recent_text_cache);
+    assert!(capabilities.resources.is_empty());
+    assert!(
+        capabilities
+            .operations
+            .iter()
+            .any(|op| op.definition.id == "qq.send_text" && op.target_required)
+    );
+    let app = synquay_server::interfaces::http::router(AppState {
+        tools: Some(t),
+        pipeline: Some(p),
+        ..Default::default()
+    });
+    let res = app
+        .oneshot(
+            Request::get(format!("/api/message-connections/{}/capabilities", qq.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!body.contains(TOKEN));
+    assert!(!body.contains("allowed_senders"));
+    let result: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        result["capabilities"]["messages"]["recent_text_cache"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn state_report_can_also_match_a_command_type() {
+    use tokio_util::sync::CancellationToken;
+    let (_dir, p, _, s, c, _) = setup(1883).await;
+    let view = p.routes_view().await.unwrap();
+    let target = view
+        .targets
+        .iter()
+        .find(|t| t.connection_id != c.id)
+        .unwrap()
+        .destination_id;
+    let command = Uuid::new_v4();
+    let state = Uuid::new_v4();
+    let command_type = Uuid::new_v4();
+    for (index, id, kind) in [
+        (0, command, "rule"),
+        (1, state, "state"),
+        (2, command_type, "command"),
+    ] {
+        let mut change = json!({"kind":"save","name":format!("type-{kind}"),"enabled":true,"source_id":c.id,"event_type":null,"destination_ids":[target],"message_types":["state","command"]});
+        if kind == "rule" {
+            change["command"] = json!({"text_pointer":"/payload/text","trigger":"/alarm","mode":"exact","output":{"kind":"original"}});
+        } else if kind == "state" {
+            change["message_types"] = json!(["state"]);
+        }
+        let input=serde_json::from_value(json!({"operation_id":Uuid::new_v4(),"expected_revision":view.snapshot.revision+index,"route_id":id,"change":change})).unwrap();
+        p.change_route(Uuid::from_u128(10), input).await.unwrap();
+    }
+    let scope = ConnectionScope {
+        workspace_id: p.source.workspace_id,
+        connection_id: c.id,
+    };
+    let mut message = event(scope);
+    message.route_context = Some(RouteBinding::new(
+        "mqtt",
+        json!({"topic":"home/switch/pub","retain":false}),
+    ));
+    message.payload = EventPayload::Json(json!({"payload":{"key":1,"text":"/alarm"}}));
+    s.append(message).await.unwrap();
+    p.tick(&CancellationToken::new()).await.unwrap();
+    let view = p.routes_view().await.unwrap();
+    for id in [command, state, command_type] {
+        assert_eq!(view.matched.get(&id).copied().unwrap_or(0), 1);
+    }
 }

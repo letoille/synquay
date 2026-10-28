@@ -144,7 +144,7 @@ pub fn callback(
         schema_version: 1,
         occurred_at: None,
         payload: EventPayload::Json(
-            json!({"content":content.trim(),"msg_id":id,"group_openid":if direct {None}else{Some(conversation)},"user_openid":if direct{Some(conversation)}else{None},"sender_openid":sender,"timestamp":d["timestamp"],"attachments":d["attachments"]}),
+            json!({"group_name":null,"content":content.trim(),"msg_id":id,"group_openid":if direct {None}else{Some(conversation)},"user_openid":if direct{Some(conversation)}else{None},"sender_openid":sender,"timestamp":d["timestamp"],"attachments":d["attachments"]}),
         ),
     })))
 }

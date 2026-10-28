@@ -33,8 +33,9 @@ pub mod workspaces;
 
 pub mod mcp_content;
 
-pub mod agent;
-
 pub mod connection_routing;
 
 pub mod connection_actions;
+pub mod connection_data;
+
+pub mod recent_messages;

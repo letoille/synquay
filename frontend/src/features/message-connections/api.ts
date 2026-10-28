@@ -8,7 +8,8 @@ export type Config=
  |{kind:'webhook';secret_env:string;policy:{authentication:'bearer'|'hmac_sha256';format:{kind:'envelope'}|{kind:'json';event_type:string;id_header:string}}}
  |{kind:'http_client';url:string;method:string;allow_http:boolean;auth:HttpAuth;body:BodyMode}
  |{kind:'mqtt';capabilities?:MqttCapabilities;host:string;port:number;username:string|null;password_env:string|null;tls:null|{ca_env:string|null;client_cert_env:string|null;client_key_env:string|null};subscription:null|{topic:string;qos:number;event_type:string;include_metadata?:boolean};publish:null|{topic:string;qos:number;retain:boolean;body:BodyMode}};
-export type Connection={id:string;name:string;description:string;enabled:boolean;config:Config;secret_configured?:boolean};
+export type RecentMessagesConfig={enabled:boolean;max_items:number;ttl_seconds:number};
+export type Connection={id:string;name:string;description:string;enabled:boolean;config:Config;recent_messages?:RecentMessagesConfig;secret_configured?:boolean};
 export type Snapshot={revision:number;connections:Connection[]};
 export type Input={operation_id:string;expected_revision:number;connection_id:string;connection:Connection|null;secret?:string};
 export class ConnectionError extends Error {constructor(public status:number,public code:string,public fields:{path:string;code:string}[]=[]){super(code);}}

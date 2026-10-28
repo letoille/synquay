@@ -87,7 +87,7 @@ impl ToolRuntime {
         Ok(
             json!({"id":server.id,"name":server.name,"description":server.description,"enabled":server.enabled,"deleted":server.deleted,
             "public_url":server.public_url,"revision":server.revision,"tool_revision":profile.revision,"path":path,"address":address,
-            "content_scope":content_scope,"content_revision":self.config.mcp_content.revision,
+            "content_scope":content_scope,"content_revision":self.config.mcp_content.revision,"builtin_scope":server.builtin_scope,
             "exposed_tools":profile.tools.into_iter().map(|t|t.public_name).collect::<Vec<_>>(),
             "is_default":default,"authentication":authentication,"auth":server.auth,"transport":server.transport}),
         )
@@ -203,8 +203,26 @@ impl ToolRuntime {
                         .public_url
                 }
             };
+            let builtin_scope = match &input.builtin_scope {
+                Some(scope) => {
+                    runtime
+                        .store
+                        .validate_builtin_scope(runtime.config.workspace_id, scope.clone())
+                        .await?;
+                    scope.clone()
+                }
+                None if input.expected_revision == 0 => Default::default(),
+                None => {
+                    runtime
+                        .store
+                        .mcp_server(runtime.config.workspace_id, id)
+                        .await?
+                        .builtin_scope
+                }
+            };
             let server = McpServer {
                 id,
+                builtin_scope,
                 name: input.name.clone(),
                 public_url,
                 content_scope,

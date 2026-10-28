@@ -20,7 +20,6 @@ Synquay（汇流港）是使用 **Rust 和 React** 构建的自托管网关。�
 - 将应用的 Webhook 事件转发到 HTTP 接口或 MQTT Topic。
 - 接收 QQ 群聊、单聊消息，匹配指令后回复或调用已配置的能力。
 - 向 MCP 客户端开放选定的 HTTP 工具、资源和提示词。
-- 使用独立的 Agent 收件箱模式持久化消息，由 Agent Worker 通过 MCP 领取和处理任务，再将结果投递到配置的 HTTP 回调。
 
 Synquay 负责接入与投递，模型推理由 Agent 完成。收到 Webhook **不会自动唤醒 ChatGPT 或其他 MCP 客户端**。
 
@@ -29,7 +28,7 @@ Synquay 负责接入与投递，模型推理由 Agent 完成。收到 Webhook **
 | 模块 | 当前支持 |
 | --- | --- |
 | 连接 | 带认证的 Webhook；HTTP/HTTPS 客户端；MQTT 3.1.1 TCP/TLS 订阅与发布；QQ 官方机器人文本消息 |
-| 路由 | 来源筛选、多目标转发、指令映射、直接回复、能力调用、HTTP Agent 目标 |
+| 路由 | 来源筛选、多目标转发、指令映射、直接回复、能力调用 |
 | MCP | 多服务、独立地址与开放范围；Streamable HTTP；工具、资源、资源模板、提示词和参数补全 |
 | MCP 认证 | Basic Auth、JWT 校验、外部 OAuth 令牌内省、无认证；保留部署级 Bearer 配置 |
 | 投递 | SQLite 持久化、事件去重、事务 Outbox、有界队列、背压与不确定结果恢复 |
@@ -78,7 +77,7 @@ ssh -L 8080:127.0.0.1:8080 user@server
 2. **路由**：选择接收连接、处理方式和发送目标，准备好后启用连接与路由。
 3. **MCP 服务**：创建或编辑服务，选择开放能力，将地址和认证信息配置到 MCP 客户端。
 
-消息转发可以独立于 MCP 运行。Agent 收件箱属于独立部署模式；异步 Agent 结果尚不能自动关联并回复任意 QQ 原会话。
+消息转发可以独立于 MCP 运行；外部处理结果尚不能自动关联并回复任意 QQ 原会话。
 
 ### 本地开发
 
@@ -111,7 +110,6 @@ cargo build --release --locked -p synquay-server
 | [QQ Bot](docs/qq-bot.md) | 回调、密钥与消息收发约束 |
 | [连接路由](docs/connection-routing.md) | Topic、会话、指令与回复 |
 | [MCP 内容](docs/webhook-mcp.md) | 工具、资源、提示词及协议边界 |
-| [Agent 收件箱](docs/agent-inbox.md) | 通过 MCP 领取任务和提交结果 |
 | [架构](docs/architecture/README.md) | 模块契约与扩展点 |
 
 ## 项目结构
@@ -130,7 +128,6 @@ docs/                架构与运行指南
 - 管理台登录与完整的授权交互。
 - 上游 MCP Server 桥接与可执行 CLI 适配器。
 - 定时自动化与更多连接器。
-- 异步 Agent 结果与来源会话的可信回复关联。
 
 以上为规划能力，当前安装包尚未提供。
 

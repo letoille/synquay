@@ -1,5 +1,6 @@
 //! Single-process tool composition. Trusted file inventory is extended by durable
 //! admin-managed connections; exposure remains a separate explicit publication.
+mod builtins;
 pub mod config;
 pub mod connections;
 mod control;
@@ -42,8 +43,8 @@ pub struct ToolRuntime {
     endpoint_auth_cache: std::sync::Mutex<
         std::collections::HashMap<uuid::Uuid, (u64, Arc<endpoint_auth::PreparedAuth>)>,
     >,
-    pub agent: Option<crate::application::services::agent::AgentJobService>,
     pub service: ToolService,
+    governance: Arc<Governance>,
     pub content: crate::application::services::mcp_content::McpContentService,
     inventory: Arc<RwLock<ToolsConfig>>,
     registry: Arc<ConnectorRegistry>,
@@ -89,7 +90,7 @@ impl PolicyEngine for ToolPolicy {
                 .await?;
                 let within = match &resource {
                     Resource::Profile { profile_id, .. }
-                    | Resource::AgentQueue { profile_id, .. }
+                    | Resource::McpBuiltin { profile_id, .. }
                     | Resource::McpResource { profile_id, .. }
                     | Resource::McpPrompt { profile_id, .. } => *profile_id == id,
                     Resource::Tool { scope, tool_id } => profile.tools.iter().any(|t| {
@@ -141,7 +142,7 @@ impl PolicyEngine for ToolPolicy {
             };
             let device_tool = if let Resource::Tool { scope, tool_id } = &resource {
                 self.store.device_connection(*scope).await.ok().filter(|c|c.enabled).and_then(|c| {
-                    if let crate::infrastructure::connectors::message_config::ConnectionConfig::Mqtt(m)=c.config {m.capabilities.definitions().into_iter().find(|d|&d.id==tool_id).map(|_|devices::public_name(c.id,tool_id))}else{None}
+                    if matches!(&c.config,crate::infrastructure::connectors::message_config::ConnectionConfig::Mqtt(_)) {crate::infrastructure::connectors::capability_catalog::operations(&c.config).into_iter().find(|a|&a.definition.id==tool_id).map(|_|devices::public_name(c.id,tool_id))}else{None}
                 })
             } else {
                 None
@@ -178,18 +179,6 @@ impl PolicyEngine for ToolPolicy {
             }
             let allowed = match (action, resource) {
                 (
-                    Action::ReadAgentJobs | Action::ManageAgentJobs,
-                    Resource::AgentQueue {
-                        workspace_id,
-                        profile_id,
-                    },
-                ) => {
-                    c.agent_jobs
-                        && workspace_id == c.workspace_id
-                        && profile_id == c.profile_id
-                        && grant.is_none_or(|g| g.agent_jobs)
-                }
-                (
                     Action::UseProfile,
                     Resource::Profile {
                         workspace_id,
@@ -206,6 +195,24 @@ impl PolicyEngine for ToolPolicy {
                                     && t.connection_id == scope.connection_id
                                     && t.definition.id == tool_id
                             }))
+                }
+                (
+                    action @ (Action::ReadMcpBuiltin | Action::InvokeMcpBuiltin),
+                    Resource::McpBuiltin {
+                        workspace_id,
+                        profile_id,
+                        tool,
+                    },
+                ) => {
+                    (matches!(action, Action::InvokeMcpBuiltin)
+                        == matches!(tool, crate::domain::builtin_tools::BuiltinTool::QqSendText))
+                        && workspace_id == c.workspace_id
+                        && endpoint.as_ref().is_some_and(|server| {
+                            server.id == profile_id
+                                && server.builtin_scope.is_valid()
+                                && server.builtin_scope.tools.contains(&tool)
+                        })
+                        && grant.is_none_or(|g| g.tools.iter().any(|name| name == tool.name()))
                 }
                 (
                     Action::ReadMcpResource,
@@ -416,25 +423,29 @@ impl ToolRuntime {
                 }
             }
         }
-        let extra_tools = store
+        let mut extra_tools: std::collections::HashSet<String> = store
             .device_connections(config.workspace_id)
             .await?
             .into_iter()
             .flat_map(|c| {
-                if let crate::infrastructure::connectors::message_config::ConnectionConfig::Mqtt(
-                    m,
-                ) = c.config
-                {
-                    m.capabilities
-                        .definitions()
+                if matches!(
+                    &c.config,
+                    crate::infrastructure::connectors::message_config::ConnectionConfig::Mqtt(_)
+                ) {
+                    crate::infrastructure::connectors::capability_catalog::operations(&c.config)
                         .into_iter()
-                        .map(|d| devices::public_name(c.id, &d.id))
+                        .map(|action| devices::public_name(c.id, &action.definition.id))
                         .collect::<Vec<_>>()
                 } else {
                     vec![]
                 }
             })
             .collect();
+        extra_tools.extend(
+            crate::domain::builtin_tools::BuiltinTool::ALL
+                .into_iter()
+                .map(|tool| tool.name().to_string()),
+        );
         security.validate_with_tools(&security_inventory, &extra_tools)?;
         let oauth = security
             .oauth
@@ -626,37 +637,20 @@ impl ToolRuntime {
             )?),
             governance.clone(),
         );
-        let agent = if config.agent_jobs {
-            let binding = store
-                .agent_binding()
-                .await?
-                .ok_or(PortError::InvalidInput {
-                    code: "agent_pipeline_required",
-                })?;
-            if binding.source.workspace_id != config.workspace_id
-                || binding.config.profile_id != config.profile_id
-                || binding.executor != config.principal_id
-            {
-                return Err(PortError::ScopeMismatch);
-            }
-            Some(crate::application::services::agent::AgentJobService::new(
-                binding,
-                store.clone(),
-                governance.clone(),
-            ))
-        } else {
-            None
-        };
         let publication_gate = Arc::new(tokio::sync::RwLock::new(()));
-        let service =
-            ToolService::new(store.clone(), schemas.clone(), registry.clone(), governance)
-                .with_ledger(store.clone())
-                .with_publication_gate(publication_gate.clone());
+        let service = ToolService::new(
+            store.clone(),
+            schemas.clone(),
+            registry.clone(),
+            governance.clone(),
+        )
+        .with_ledger(store.clone())
+        .with_publication_gate(publication_gate.clone());
         let runtime = Arc::new(Self {
             device_scopes: Default::default(),
-            agent,
             content,
             service,
+            governance,
             inventory,
             registry,
             schemas,

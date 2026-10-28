@@ -11,8 +11,6 @@ pub struct PipelineConfig {
     #[serde(default = "default_bootstrap_routes")]
     pub bootstrap_routes: bool,
     #[serde(default)]
-    pub agent: Option<crate::domain::agent::AgentConfig>,
-    #[serde(default)]
     pub webhook: super::webhook::WebhookConfig,
     pub retention: Option<crate::infrastructure::storage::maintenance::RetentionPolicy>,
     pub content: Option<crate::infrastructure::content::ContentConfig>,
@@ -76,13 +74,6 @@ impl PipelineConfig {
     }
     pub fn validate(&self) -> Result<(), PortError> {
         self.webhook.validate()?;
-        if self.agent.as_ref().is_some_and(|a| {
-            !a.valid() || !self.additional_targets.is_empty() || self.content.is_some()
-        }) {
-            return Err(PortError::InvalidInput {
-                code: "invalid_agent_pipeline",
-            });
-        }
         if let Some(content) = &self.content {
             content.validate()?;
         }
@@ -118,9 +109,7 @@ impl PipelineConfig {
                 });
             }
         }
-        if self.additional_sources.len() > 15
-            || (self.agent.is_some() && !self.additional_sources.is_empty())
-        {
+        if self.additional_sources.len() > 15 {
             return Err(PortError::InvalidInput {
                 code: "unsupported_sources",
             });

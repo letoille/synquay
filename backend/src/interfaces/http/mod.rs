@@ -1,4 +1,3 @@
-mod agent_tools;
 mod connection_control;
 mod content;
 mod dto;
@@ -25,6 +24,7 @@ use axum::{
 
 pub fn router(state: AppState) -> Router {
     let tools = state.tools.clone();
+    let pipeline = state.pipeline.clone();
     let route_control = tools.as_ref().map(|_| route_control::router(state.clone()));
     let message_control = tools
         .as_ref()
@@ -44,7 +44,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state);
     match tools {
         Some(runtime) => router
-            .merge(mcp::router(runtime))
+            .merge(mcp::router(runtime, pipeline))
             .merge(route_control.expect("route control"))
             .merge(message_control.expect("message connections")),
         None => router,

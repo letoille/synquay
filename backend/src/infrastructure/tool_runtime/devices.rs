@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::{profile::PublishedTool, tool::ToolEffect};
 use crate::infrastructure::connectors::{
-    message_config::ConnectionConfig, mqtt::actions::MqttActions,
+    capability_catalog, message_config::ConnectionConfig, mqtt::actions::MqttActions,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -16,10 +16,13 @@ impl ToolRuntime {
             .device_connections(self.config.workspace_id)
             .await?
         {
-            let ConnectionConfig::Mqtt(config) = &c.config else {
+            if !matches!(&c.config, ConnectionConfig::Mqtt(_)) {
                 continue;
-            };
-            for definition in config.capabilities.definitions() {
+            }
+            for definition in capability_catalog::operations(&c.config)
+                .into_iter()
+                .map(|action| action.definition)
+            {
                 tools.push(PublishedTool {
                     public_name: public_name(c.id, &definition.id),
                     scope: ConnectionScope {
@@ -50,11 +53,9 @@ impl ToolRuntime {
             .chain(
                 connections
                     .iter()
-                    .flat_map(|c| match &c.config {
-                        ConnectionConfig::Mqtt(m) => m.capabilities.definitions(),
-                        _ => vec![],
-                    })
-                    .map(|d| d.input_schema),
+                    .filter(|c| matches!(&c.config, ConnectionConfig::Mqtt(_)))
+                    .flat_map(|c| capability_catalog::operations(&c.config))
+                    .map(|action| action.definition.input_schema),
             );
         self.schemas.replace(schema::Schemas::compile(schemas)?)?;
         let mut scopes = self
@@ -84,7 +85,10 @@ impl ToolRuntime {
                 workspace_id: self.config.workspace_id,
                 connection_id: c.id,
             };
-            let definitions = config.capabilities.definitions();
+            let definitions = capability_catalog::operations(&c.config)
+                .into_iter()
+                .map(|action| action.definition)
+                .collect::<Vec<_>>();
             let mut registration = ConnectorRegistration::new(ConnectorDescriptor {
                 scope,
                 kind: ConnectorKind::Mqtt,

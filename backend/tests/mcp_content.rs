@@ -256,7 +256,6 @@ async fn oauth_content_grants_do_not_inherit_tool_grants_and_viewer_is_still_sco
             required_scope: "synquay".into(),
             allow_loopback_http: false,
             grants: vec![OAuthGrant {
-                agent_jobs: false,
                 subject: "user".into(),
                 oauth_client_id: "client".into(),
                 principal_id: principal,

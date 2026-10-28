@@ -5,6 +5,8 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct McpServer {
     pub id: Uuid,
+    #[serde(default)]
+    pub builtin_scope: super::builtin_tools::BuiltinScope,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -23,6 +25,8 @@ pub struct McpServer {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_scope: Option<super::builtin_tools::BuiltinScope>,
     #[serde(default)]
     pub expected_content_revision: Option<u64>,
     pub operation_id: Uuid,

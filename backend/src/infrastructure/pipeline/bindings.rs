@@ -77,17 +77,45 @@ impl RoutingRules for Bindings {
                 return Err(PortError::ScopeMismatch);
             }
             let snapshot = self.routes.read().map_err(|_| PortError::Unavailable)?;
+            use crate::domain::managed_route::MessageType;
+            // A command label is produced only by a matching, enabled route for
+            // this same source and source binding. It is not an execution grant.
+            let needs_command = snapshot.routes.iter().any(|r| {
+                r.enabled
+                    && r.message_types
+                        .iter()
+                        .any(|kind| matches!(kind, MessageType::Message | MessageType::Command))
+            });
+            let command = needs_command
+                && snapshot.routes.iter().any(|r| {
+                    r.enabled
+                        && (!event.state_report || r.message_types.contains(&MessageType::State))
+                        && r.source_id.unwrap_or(self.source.connection_id)
+                            == event.scope.connection_id
+                        && self.source_matches(r, event)
+                        && r.event_type
+                            .as_ref()
+                            .is_none_or(|kind| *kind == event.event_type)
+                        && r.command
+                            .as_ref()
+                            .is_some_and(|c| c.capture(&event.payload).is_some())
+                });
+            let matches_type = |kinds: &[MessageType]| {
+                kinds.iter().any(|kind| match kind {
+                    MessageType::Message => !event.state_report && !command,
+                    MessageType::State => event.state_report,
+                    MessageType::Command => command,
+                })
+            };
             Ok(snapshot
                 .routes
                 .iter()
                 .filter(|r| {
                     r.enabled
+                        && matches_type(&r.message_types)
+                        && (!event.state_report || r.message_types.contains(&MessageType::State))
                         && r.source_id.unwrap_or(self.source.connection_id)
                             == event.scope.connection_id
-                        && !matches!(
-                            r.processor,
-                            Some(crate::domain::managed_route::RouteProcessor::AgentDraft { .. })
-                        )
                         && self.source_matches(r, event)
                         && r.command
                             .as_ref()

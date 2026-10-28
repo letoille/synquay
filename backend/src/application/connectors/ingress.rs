@@ -59,6 +59,7 @@ impl IngressService {
                 let mut route_trace = context.route_trace;
                 route_trace.push(self.scope);
                 let envelope = EventEnvelope {
+                    state_report: false,
                     route_context: input.route_context,
                     event_id: Uuid::new_v4(),
                     scope: self.scope,

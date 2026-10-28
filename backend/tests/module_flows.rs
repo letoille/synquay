@@ -918,3 +918,107 @@ async fn rejected_or_unsent_deliveries_retry_with_bounds_but_unknown_sends_do_no
         assert!(report.state_recorded);
     }
 }
+
+#[tokio::test]
+async fn ephemeral_read_never_uses_ledger_and_fails_closed_on_audit() {
+    use synquay_server::application::{
+        ports::invocations::{Admission, InvocationKey, InvocationLedger, SavedOutcome},
+        services::{
+            governance::Governance,
+            invocation::{InvocationRequest, InvocationService},
+        },
+    };
+    struct ForbiddenLedger;
+    impl InvocationLedger for ForbiddenLedger {
+        fn begin(&self, _: InvocationKey, _: String) -> PortFuture<'_, Admission> {
+            panic!("ephemeral read must not persist admission")
+        }
+        fn finish(&self, _: InvocationKey, _: SavedOutcome, _: AuditRecord) -> PortFuture<'_, ()> {
+            panic!("ephemeral read must not persist result")
+        }
+    }
+    let f = Fixture::new();
+    let service = InvocationService {
+        validator: f.clone(),
+        governance: Arc::new(Governance::new(f.clone(), f.clone())),
+        ledger: Some(Arc::new(ForbiddenLedger)),
+    };
+    let request = || InvocationRequest {
+        scope: f.target,
+        definition: f.profile.lock().unwrap().tools[0].definition.clone(),
+        executor: f.clone(),
+        invocation_id: Uuid::new_v4(),
+        arguments: json!({}),
+        intent: json!({}),
+    };
+    let report = service
+        .invoke_ephemeral_read(&f.context(), request())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.outcome.unwrap().structured_content,
+        Some(json!({"version":1}))
+    );
+    assert_eq!(f.audit.lock().unwrap().len(), 2);
+    struct BuiltinReader;
+    impl ToolExecutor for BuiltinReader {
+        fn discover(&self, _: OperationContext) -> PortFuture<'_, Vec<ToolDefinition>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn invoke(&self, _: OperationContext, _: ToolCall) -> PortFuture<'_, ToolResult> {
+            Box::pin(async {
+                Ok(ToolResult {
+                    content: vec![],
+                    structured_content: Some(json!({"messages":[]})),
+                    is_error: false,
+                })
+            })
+        }
+    }
+    let builtin = synquay_server::domain::builtin_tools::BuiltinTool::RecentMessages;
+    let mut builtin_request = request();
+    builtin_request.definition.id = builtin.name().into();
+    builtin_request.executor = Arc::new(BuiltinReader);
+    let report = service
+        .invoke_ephemeral_builtin(&f.context(), builtin_request, Uuid::new_v4(), builtin)
+        .await
+        .unwrap();
+    assert!(report.outcome.is_ok());
+    assert!(
+        f.audit
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.action == Action::ReadMcpBuiltin
+                && matches!(entry.resource, Resource::McpBuiltin { tool, .. } if tool == builtin))
+    );
+    let mut wrong_builtin = request();
+    wrong_builtin.definition.id = "unrelated_tool".into();
+    assert!(matches!(
+        service
+            .invoke_ephemeral_builtin(&f.context(), wrong_builtin, Uuid::new_v4(), builtin)
+            .await,
+        Err(PortError::PermissionDenied)
+    ));
+    f.fail_audit_end.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        service.invoke_ephemeral_read(&f.context(), request()).await,
+        Err(PortError::Unavailable)
+    ));
+    f.fail_audit_end.store(false, Ordering::SeqCst);
+    let mut side_effect = request();
+    side_effect.definition.effect = ToolEffect::SideEffecting;
+    let before = f.calls.load(Ordering::SeqCst);
+    assert!(matches!(
+        service
+            .invoke_ephemeral_read(&f.context(), side_effect)
+            .await,
+        Err(PortError::PermissionDenied)
+    ));
+    assert_eq!(f.calls.load(Ordering::SeqCst), before);
+    f.deny_tool.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        service.invoke_ephemeral_read(&f.context(), request()).await,
+        Err(PortError::PermissionDenied)
+    ));
+}

@@ -16,6 +16,7 @@ use uuid::Uuid;
 const SECRET: &str = "test-only-inline-qq-secret-123456";
 fn connection() -> MessageConnection {
     MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "Bot".into(),
         description: String::new(),

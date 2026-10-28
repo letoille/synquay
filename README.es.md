@@ -20,7 +20,6 @@ Synquay es una pasarela autoalojada desarrollada con **Rust y React**. Conecta a
 - Reenviar eventos Webhook de una aplicación a un endpoint HTTP o un tema MQTT.
 - Recibir mensajes de grupos o conversaciones privadas de QQ, reconocer comandos y responder o invocar una capacidad configurada.
 - Publicar herramientas HTTP, recursos y prompts seleccionados para clientes MCP.
-- Usar el modo independiente de bandeja de entrada del Agent para guardar mensajes, permitir que un worker reclame y procese tareas mediante MCP y enviar los resultados a un callback HTTP configurado.
 
 Synquay se encarga de la integración y la entrega; la inferencia se ejecuta en tu Agent. Recibir un Webhook **no activa automáticamente ChatGPT ni otro cliente MCP**.
 
@@ -29,7 +28,7 @@ Synquay se encarga de la integración y la entrega; la inferencia se ejecuta en 
 | Área | Disponible actualmente |
 | --- | --- |
 | Conexiones | Webhooks autenticados; clientes HTTP/HTTPS; suscripción y publicación MQTT 3.1.1 mediante TCP/TLS; mensajes de texto del QQ Bot oficial |
-| Rutas | Filtros de origen, múltiples destinos, mapeo de comandos, respuestas directas, llamadas a capacidades y destinos Agent HTTP |
+| Rutas | Filtros de origen, múltiples destinos, mapeo de comandos, respuestas directas, llamadas a capacidades |
 | MCP | Varios servicios con URL y ámbitos de exposición propios; Streamable HTTP; herramientas, recursos, plantillas de recursos, prompts y completado |
 | Autenticación MCP | Basic Auth, validación JWT, introspección externa de tokens OAuth y modo sin autenticación; también se conserva la configuración Bearer del despliegue |
 | Entrega | Persistencia SQLite, deduplicación de eventos, Outbox transaccional, colas limitadas, contrapresión y recuperación de resultados inciertos |
@@ -78,7 +77,7 @@ El paquete incluye el backend, la consola y el servicio systemd. Se ejecuta con 
 2. **Rutas:** selecciona la conexión receptora, el procesamiento y el destino. Activa la conexión y la ruta cuando estén listas.
 3. **Servicios MCP:** crea o edita un servicio, selecciona las capacidades que expondrá y configura su dirección y autenticación en tu cliente MCP.
 
-El reenvío de mensajes funciona independientemente de MCP. La bandeja de entrada del Agent es un modo de despliegue separado; los resultados asíncronos todavía no se vinculan automáticamente con cualquier conversación de QQ para responder a ella.
+El reenvío de mensajes funciona independientemente de MCP. Las respuestas externas aún no se vinculan automáticamente con la conversación original de QQ.
 
 ### Desarrollo local
 
@@ -111,7 +110,6 @@ La documentación detallada de diseño y protocolos está actualmente, en su may
 | [QQ Bot](docs/qq-bot.md) | Callbacks, credenciales y restricciones de mensajería |
 | [Rutas de conexión](docs/connection-routing.md) | Temas, conversaciones, comandos y respuestas |
 | [Contenido MCP](docs/webhook-mcp.md) | Herramientas, recursos, prompts y límites del protocolo |
-| [Bandeja de entrada del Agent](docs/agent-inbox.md) | Reclamar tareas y enviar resultados mediante MCP |
 | [Arquitectura](docs/architecture/README.md) | Contratos de módulos y puntos de extensión |
 
 ## Estructura del proyecto
@@ -130,7 +128,6 @@ docs/                Arquitectura y guías de operación
 - Inicio de sesión en la consola y una experiencia completa de autorización.
 - Puente hacia servidores MCP externos y adaptadores CLI ejecutables.
 - Automatizaciones programadas y más conectores.
-- Asociación fiable de respuestas asíncronas del Agent con la conversación de origen.
 
 Son funciones previstas; el paquete actual todavía no las incluye.
 

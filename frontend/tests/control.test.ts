@@ -204,7 +204,7 @@ test('route API validates availability, preserves uncertain mutation identity, a
   }finally{globalThis.fetch=prior;}
 });
 
-test('route views retain source and Agent draft identity while accepting legacy servers', async () => {
+test('route views retain source, processor and explicit message types', async () => {
   const {parseRoutes,routeSave}=await import('../src/features/routes/api.ts');
   const route={id:'route',name:'analysis',enabled:false,event_type:'app.message',revision:1,targets:[{rule_id:'branch',destination_id:'target'}]};
   const legacy={available:true,reason:null,source_id:'primary',source_address:'/api/webhooks/primary',counts:{},targets:[],snapshot:{revision:1,routes:[route]}};
@@ -214,13 +214,18 @@ test('route views retain source and Agent draft identity while accepting legacy 
   assert.equal('source_id' in routeSave(old.snapshot!.routes[0]),false);
   assert.equal('processor' in routeSave(old.snapshot!.routes[0]),false);
   const sources=[...old.sources!,{connection_id:'app',name:'Application',address:'/api/webhooks/app'}];
-  const processor={kind:'agent_draft' as const,name:'Analysis assistant'};
+  const processor={kind:'forward' as const};
   const current={...legacy,sources,supports_processors:true,snapshot:{revision:2,routes:[{...route,source_id:'app',processor}]}};
   const parsed=parseRoutes(current);
   assert.deepEqual(parsed.sources,sources);
   assert.equal(parsed.supports_processors,true);
-  assert.deepEqual(routeSave(parsed.snapshot!.routes[0]),{kind:'save',source_id:'app',processor,name:'analysis',enabled:false,event_type:'app.message',destination_ids:['target']});
+  const filtered=parseRoutes({...current,snapshot:{revision:2,routes:[{...route,message_types:['state','command']}]}});
+  assert.deepEqual(routeSave(filtered.snapshot!.routes[0]).message_types,['state','command']);
+  assert.throws(()=>parseRoutes({...current,snapshot:{revision:2,routes:[{...route,message_types:['state','state']}]}}));
+  assert.throws(()=>parseRoutes({...current,snapshot:{revision:2,routes:[{...route,message_types:['unknown']}]}}));
+  assert.deepEqual(routeSave(parsed.snapshot!.routes[0]),{kind:'save',message_types:['message','command'],source_id:'app',processor,name:'analysis',enabled:false,event_type:'app.message',destination_ids:['target']});
   assert.throws(()=>parseRoutes({...current,snapshot:{revision:2,routes:[{...route,processor:{kind:'unknown'}}]}}));
+  for (const kind of ['agent_draft','agent_http']) assert.throws(()=>parseRoutes({...current,snapshot:{revision:2,routes:[{...route,processor:{kind,name:'legacy'}}]}}));
 });
 
 test('route source filters remember independent view choices and prune removed sources', async () => {

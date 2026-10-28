@@ -23,7 +23,7 @@ trait EventSubscriptionStore: Send + Sync {
 }
 ```
 
-下游协议 handler 调用 ToolService、资源/Prompt 服务、AgentJobService；上游会话实现 ToolExecutor、ResourceReader、PromptProvider 等能力端口。协议 SDK 的请求/响应类型只出现在 interfaces/infrastructure，领域层不导入 SDK。
+下游协议 handler 调用 ToolService 和资源/Prompt 服务；上游会话实现 ToolExecutor、ResourceReader、PromptProvider 等能力端口。协议 SDK 的请求/响应类型只出现在 interfaces/infrastructure，领域层不导入 SDK。
 
 ## 目录与结果映射
 

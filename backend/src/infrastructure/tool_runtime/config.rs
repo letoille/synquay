@@ -71,8 +71,6 @@ impl HttpToolConfig {
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
     #[serde(default)]
-    pub agent_jobs: bool,
-    #[serde(default)]
     pub mcp_content: crate::domain::mcp_content::McpContentConfig,
     pub database: PathBuf,
     pub workspace_id: Uuid,

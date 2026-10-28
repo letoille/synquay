@@ -46,6 +46,7 @@ async fn scenario() {
     );
     let actor = Uuid::from_u128(10);
     let c = MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "QQ test".into(),
         description: String::new(),
@@ -87,7 +88,7 @@ async fn scenario() {
         .find(|t| t.protocol == "HTTP")
         .unwrap()
         .destination_id;
-    let change=serde_json::from_value(json!({"kind":"save","name":"QQ → Agent","enabled":true,"source_id":c.id,"event_type":"qq.group.message","processor":{"kind":"agent_http","name":"Test Agent"},"destination_ids":[dest],"command":{"text_pointer":"/content","trigger":"/助手","mode":"prefix","output":{"kind":"json","event_type":"assistant.request","template":{"request":{"$command":"arguments"},"msg_id":{"$payload":"/msg_id"},"group_openid":{"$payload":"/group_openid"}}}}})).unwrap();
+    let change=serde_json::from_value(json!({"kind":"save","name":"QQ → HTTP","enabled":true,"source_id":c.id,"event_type":"qq.group.message","processor":{"kind":"forward"},"destination_ids":[dest],"command":{"text_pointer":"/content","trigger":"/助手","mode":"prefix","output":{"kind":"json","event_type":"assistant.request","template":{"request":{"$command":"arguments"},"msg_id":{"$payload":"/msg_id"},"group_openid":{"$payload":"/group_openid"}}}}})).unwrap();
     p.change_route(
         actor,
         RouteInput {
@@ -251,6 +252,7 @@ async fn scenario() {
             expected_revision: 1,
             connection_id: c.id,
             connection: Some(MessageConnection {
+                recent_messages: Default::default(),
                 enabled: false,
                 ..c.clone()
             }),
@@ -297,6 +299,7 @@ async fn bot_level_discovery() {
             .unwrap(),
     );
     let c = MessageConnection {
+        recent_messages: Default::default(),
         id: Uuid::new_v4(),
         name: "Bot".into(),
         description: String::new(),
@@ -496,4 +499,155 @@ async fn bot_level_discovery() {
         0
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn group_name_enrichment_does_not_change_message_deduplication() {
+    use synquay_server::domain::{
+        connection_routing::RouteBinding,
+        event::{EventPayload, IncomingEvent, IngestDisposition},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let pipeline = Arc::new(
+        Pipeline::build(
+            config(&dir.path().join("qq.db"), "http://127.0.0.1:1"),
+            TOKEN.into(),
+            None,
+        )
+        .await
+        .unwrap(),
+    );
+    let connection = MessageConnection {
+        id: Uuid::new_v4(),
+        name: "QQ".into(),
+        description: String::new(),
+        enabled: true,
+        recent_messages: RecentMessagesConfig {
+            enabled: true,
+            ..Default::default()
+        },
+        config: ConnectionConfig::QqBot(QqBotConfig {
+            app_id: "123456".into(),
+            resolved_secret: None,
+            group_openid: String::new(),
+            allowed_senders: vec![],
+            allow_proactive: false,
+        }),
+    };
+    pipeline
+        .change_connection(
+            Uuid::from_u128(10),
+            ConnectionInput {
+                secret: Some(TOKEN.into()),
+                operation_id: Uuid::new_v4(),
+                expected_revision: 0,
+                connection_id: connection.id,
+                connection: Some(connection.clone()),
+            },
+        )
+        .await
+        .unwrap();
+    let make = |group_name: Option<&str>, content: &str| {
+        let mut payload = json!({"content":content,"msg_id":"same"});
+        if let Some(name) = group_name {
+            payload["group_name"] = json!(name);
+        }
+        IncomingEvent {
+            route_context: Some(RouteBinding::new(
+                "qq",
+                json!({"app_id":"123456","kind":"group","id":"group_A","msg_id":"same","sender_openid":"sender_A"}),
+            )),
+            event_type: "qq.group.message".into(),
+            schema_version: 1,
+            occurred_at: None,
+            source_event_id: Some("same".into()),
+            payload: EventPayload::Json(payload),
+        }
+    };
+    let first = pipeline
+        .accept_from(connection.id, Uuid::new_v4(), make(None, "hello"))
+        .await
+        .unwrap();
+    assert_eq!(first.disposition, IngestDisposition::Stored);
+    let mut named = make(Some("流放之路反馈群"), "next");
+    named.source_event_id = Some("message-next".into());
+    if let EventPayload::Json(payload) = &mut named.payload {
+        payload["msg_id"] = json!("message-next");
+    }
+    pipeline
+        .accept_from(connection.id, Uuid::new_v4(), named)
+        .await
+        .unwrap();
+    let directory = pipeline
+        .connection_conversations(
+            connection.id,
+            synquay_server::infrastructure::storage::conversations::ConversationQuery {
+                kind: Some("group".into()),
+                search: Some("反馈".into()),
+                page: None,
+                page_size: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(directory.total, 1);
+    assert_eq!(
+        directory.items[0].display_name.as_deref(),
+        Some("流放之路反馈群")
+    );
+    use synquay_server::application::ports::connection_data::ConnectionMessageReader;
+    use synquay_server::domain::{connector::ConnectionScope, recent_messages::ConversationKey};
+    let page = pipeline
+        .read_connection_messages(
+            ConversationKey {
+                scope: ConnectionScope {
+                    workspace_id: pipeline.source.workspace_id,
+                    connection_id: connection.id,
+                },
+                account: "123456".into(),
+                kind: "group".into(),
+                id: "group_A".into(),
+            },
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        page.messages[0].group_name.as_deref(),
+        Some("流放之路反馈群")
+    );
+    use synquay_server::domain::builtin_tools::{BuiltinScope, BuiltinTool, ConversationGrant};
+    let grant = ConversationGrant {
+        connection_id: connection.id,
+        account: "123456".into(),
+        kind: "group".into(),
+        conversation_id: "group_A".into(),
+    };
+    let scope = BuiltinScope {
+        tools: vec![BuiltinTool::RecentMessages],
+        connections: vec![connection.id],
+        conversations: vec![grant.clone()],
+        qq_send_conversations: vec![],
+    };
+    let response = pipeline
+        .builtin_recent_messages(&scope, grant, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(response["messages"][0]["group_name"], "流放之路反馈群");
+    let again = pipeline
+        .accept_from(connection.id, Uuid::new_v4(), make(Some("新群名"), "hello"))
+        .await
+        .unwrap();
+    assert_eq!(again.disposition, IngestDisposition::Duplicate);
+    assert!(
+        pipeline
+            .accept_from(
+                connection.id,
+                Uuid::new_v4(),
+                make(Some("新群名"), "changed")
+            )
+            .await
+            .is_err()
+    );
 }

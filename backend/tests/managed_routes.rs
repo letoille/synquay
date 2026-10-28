@@ -47,6 +47,7 @@ fn save(revision: u64, id: Uuid, enabled: bool, targets: Vec<Uuid>) -> RouteInpu
         expected_revision: revision,
         route_id: id,
         change: RouteChange::Save {
+            message_types: default_message_types(),
             response: None,
             routing: None,
             source_id: None,
@@ -304,7 +305,7 @@ async fn routes_api_enforces_origin_workspace_and_reports_missing_pipeline() {
 }
 
 #[tokio::test]
-async fn independent_webhook_sources_isolate_identical_event_ids_and_agent_drafts_cannot_run() {
+async fn independent_webhook_sources_isolate_identical_event_ids() {
     use synquay_server::infrastructure::pipeline::config::SourceConfig;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("multi.db");
@@ -394,26 +395,6 @@ async fn independent_webhook_sources_isolate_identical_event_ids_and_agent_draft
             .source_id,
         Some(second)
     );
-    let mut draft = save(4, Uuid::new_v4(), false, vec![Uuid::from_u128(4)]);
-    if let RouteChange::Save {
-        source_id,
-        processor,
-        ..
-    } = &mut draft.change
-    {
-        *source_id = Some(second);
-        *processor = Some(RouteProcessor::AgentDraft {
-            name: "分析助手".into(),
-        });
-    }
-    p.change_route(actor, draft.clone()).await.unwrap();
-    let enable = save(5, draft.route_id, true, vec![Uuid::from_u128(4)]);
-    assert!(matches!(
-        p.change_route(actor, enable).await,
-        Err(PortError::InvalidInput {
-            code: "agent_executor_not_configured"
-        })
-    ));
     drop(p);
     let p = Pipeline::build(make_config(), TOKEN.into(), None)
         .await
@@ -713,34 +694,6 @@ async fn command_routes_map_payloads_deduplicate_and_survive_restart_and_legacy_
             .command
             .is_none()
     );
-    let mut agent_input = save(4, id, true, vec![Uuid::from_u128(4)]);
-    if let RouteChange::Save {
-        processor, command, ..
-    } = &mut agent_input.change
-    {
-        *processor = Some(RouteProcessor::AgentHttp {
-            name: "家庭助手".into(),
-        });
-        *command = Some(Some(Box::new(CommandMapping {
-            trigger: "/助手".into(),
-            text_pointer: "/text".into(),
-            mode: CommandMode::Prefix,
-            output: CommandOutput::Json {
-                event_type: "agent.request".into(),
-                template: json!({"request":{"$command":"arguments"}}),
-            },
-        })));
-    }
-    p.change_route(actor, agent_input).await.unwrap();
-    p.accept(Uuid::new_v4(), event("/助手 打开热水器", "agent-http"))
-        .await
-        .unwrap();
-    p.tick(&CancellationToken::new()).await.unwrap();
-    assert_eq!(received.lock().unwrap().len(), 2);
-    assert_eq!(
-        received.lock().unwrap()[1]["parts"][0]["value"]["payload"],
-        json!({"request":"打开热水器"})
-    );
     server.abort();
 }
 
@@ -779,5 +732,128 @@ async fn package_initialization_can_start_without_an_active_demo_route() {
             .snapshot
             .routes
             .is_empty()
+    );
+}
+
+#[test]
+fn removed_agent_processors_are_rejected() {
+    for processor in [
+        serde_json::json!({"kind":"agent_draft","name":"legacy"}),
+        serde_json::json!({"kind":"agent_http","name":"legacy"}),
+    ] {
+        assert!(serde_json::from_value::<RouteProcessor>(processor).is_err());
+    }
+    assert!(
+        serde_json::from_value::<RouteProcessor>(serde_json::json!({"kind":"forward"})).is_ok()
+    );
+}
+
+#[tokio::test]
+async fn message_type_filters_match_commands_and_survive_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("types.db");
+    let p = Arc::new(
+        Pipeline::build(config(&db, "http://127.0.0.1:1"), TOKEN.into(), None)
+            .await
+            .unwrap(),
+    );
+    let actor = Uuid::new_v4();
+    let rule_command = Uuid::new_v4();
+    let rule_messages = Uuid::new_v4();
+    let rule_commands = Uuid::new_v4();
+    let mut first = save(1, rule_command, true, vec![Uuid::from_u128(4)]);
+    if let RouteChange::Save {
+        command,
+        event_type,
+        ..
+    } = &mut first.change
+    {
+        *event_type = None;
+        *command=Some(Some(Box::new(serde_json::from_value(json!({"text_pointer":"/text","trigger":"/on","mode":"prefix","output":{"kind":"original"}})).unwrap())));
+    }
+    p.change_route(actor, first).await.unwrap();
+    for (revision, id, types) in [
+        (2, rule_messages, vec![MessageType::Message]),
+        (3, rule_commands, vec![MessageType::Command]),
+    ] {
+        let mut input = save(revision, id, true, vec![Uuid::from_u128(4)]);
+        if let RouteChange::Save {
+            message_types,
+            event_type,
+            ..
+        } = &mut input.change
+        {
+            *message_types = types;
+            *event_type = None;
+        }
+        p.change_route(actor, input).await.unwrap();
+    }
+    for kinds in [vec![], vec![MessageType::Command, MessageType::Command]] {
+        let mut invalid = save(4, Uuid::new_v4(), true, vec![Uuid::from_u128(4)]);
+        if let RouteChange::Save { message_types, .. } = &mut invalid.change {
+            *message_types = kinds;
+        }
+        assert!(p.change_route(actor, invalid).await.is_err());
+    }
+    drop(p);
+    let p = Arc::new(
+        Pipeline::build(config(&db, "http://127.0.0.1:1"), TOKEN.into(), None)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        p.routes_view()
+            .await
+            .unwrap()
+            .snapshot
+            .routes
+            .iter()
+            .find(|r| r.id == rule_commands)
+            .unwrap()
+            .message_types,
+        vec![MessageType::Command]
+    );
+    for (text, id) in [("hello", "a"), ("/on heater", "b")] {
+        p.accept(
+            Uuid::new_v4(),
+            IncomingEvent {
+                route_context: None,
+                event_type: "chat.message".into(),
+                schema_version: 1,
+                occurred_at: None,
+                source_event_id: Some(id.into()),
+                payload: EventPayload::Json(json!({"text":text})),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    p.tick(&CancellationToken::new()).await.unwrap();
+    let view = p.routes_view().await.unwrap();
+    assert_eq!(view.matched.get(&rule_messages).copied().unwrap_or(0), 1);
+    assert_eq!(view.matched.get(&rule_commands).copied().unwrap_or(0), 1);
+    assert_eq!(view.matched.get(&rule_command).copied().unwrap_or(0), 1);
+    let mut update = save(4, rule_commands, true, vec![Uuid::from_u128(4)]);
+    if let RouteChange::Save {
+        message_types,
+        event_type,
+        ..
+    } = &mut update.change
+    {
+        *message_types = vec![MessageType::Message];
+        *event_type = None;
+    }
+    p.change_route(actor, update).await.unwrap();
+    assert_eq!(
+        p.routes_view()
+            .await
+            .unwrap()
+            .snapshot
+            .routes
+            .iter()
+            .find(|r| r.id == rule_commands)
+            .unwrap()
+            .message_types,
+        vec![MessageType::Message]
     );
 }

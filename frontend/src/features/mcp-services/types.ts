@@ -33,13 +33,18 @@ export interface AddConnectionInput { operation_id: string; expected_revision: n
 export interface Verification { invocation_id: string; status: 'succeeded' | 'failed' | 'unknown' | 'unconfirmed' }
 export interface VerifyInput { mcp_token: string; invocation_id: string; action: { kind: 'inspect' } | { kind: 'execute'; revision: number; public_name: string; arguments: Record<string, unknown>; confirmed: boolean } }
 
+export type BuiltinTool = 'connections_list'|'connection_status'|'connection_statistics'|'recent_messages'|'qq_bot_info'|'qq_send_text';
+export type ConversationGrant = {connection_id:string;account:string;kind:'group'|'direct'|'stream';conversation_id:string};
+export type BuiltinScope = {tools:BuiltinTool[];connections:string[];conversations:ConversationGrant[];qq_send_conversations:ConversationGrant[]};
 export interface McpServer {
+  builtin_scope?: BuiltinScope;
   content_scope?: ContentScope; content_revision?: number;
   id: string; name: string; enabled: boolean; deleted: boolean; revision: number; tool_revision: number;
   path: string; address: string | null; exposed_tools: string[]; is_default: boolean; authentication: 'oauth' | 'bearer' | 'basic' | 'jwt' | 'none';
   public_url?: string; auth?: ServerAuth; description?: string; transport?: 'streamable_http';
 }
 export interface ServerChange {
+  builtin_scope?: BuiltinScope;
   content_scope?: ContentScope; expected_content_revision?: number;
   operation_id: string; expected_revision: number; expected_tool_revision: number;
   name: string; enabled: boolean; exposed_tools: string[];

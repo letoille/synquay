@@ -9,6 +9,8 @@ pub struct RouteTarget {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ManagedRoute {
+    #[serde(default = "default_message_types")]
+    pub message_types: Vec<MessageType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<RouteResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,6 +45,8 @@ pub struct RouteInput {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteChange {
     Save {
+        #[serde(default = "default_message_types")]
+        message_types: Vec<MessageType>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         response: Option<RouteResponse>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,7 +75,6 @@ pub struct RouteReceipt {
     pub revision: u64,
 }
 
-/// Agent drafts are displayable configuration, never an executable processing mode.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteProcessor {
@@ -83,13 +86,18 @@ pub enum RouteProcessor {
         revision: u64,
         allowed_senders: Vec<String>,
     },
-    AgentDraft {
-        name: String,
-    },
-    /// Submit a task to an operator-configured HTTP worker; not in-process AI execution.
-    AgentHttp {
-        name: String,
-    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageType {
+    Message,
+    State,
+    Command,
+}
+
+pub fn default_message_types() -> Vec<MessageType> {
+    vec![MessageType::Message, MessageType::Command]
 }
 
 // Omitted keeps an existing mapping (older clients); explicit null removes it.

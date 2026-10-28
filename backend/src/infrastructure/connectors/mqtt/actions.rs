@@ -18,26 +18,24 @@ pub struct MqttActions {
     pub store: Arc<SqliteStore>,
 }
 pub fn catalog(config: &MqttConfig) -> Vec<ConnectionAction> {
+    // Hash once per catalog, not once per operation.
+    let bytes = serde_json::to_vec(config).unwrap_or_default();
+    let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+    let revision =
+        (u64::from_be_bytes(digest.as_ref()[..8].try_into().unwrap()) & ((1u64 << 52) - 1)).max(1);
     config
         .capabilities
         .definitions()
         .into_iter()
-        .map(|definition| {
-            // Definition + bindings version prevents queued commands being reinterpreted after edits.
-            let bytes = serde_json::to_vec(config).unwrap_or_default();
-            let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
-            let revision = (u64::from_be_bytes(digest.as_ref()[..8].try_into().unwrap())
-                & ((1u64 << 52) - 1))
-                .max(1);
-            ConnectionAction {
-                revision,
-                definition,
-                target_required: false,
-                consumes_reply: false,
-            }
+        .map(|definition| ConnectionAction {
+            revision,
+            definition,
+            target_required: false,
+            consumes_reply: false,
         })
         .collect()
 }
+
 impl ConnectionActions for MqttActions {
     fn definitions(&self) -> Vec<ConnectionAction> {
         catalog(&self.config)
@@ -128,13 +126,19 @@ impl ToolExecutor for MqttActions {
                         return Ok(result_tool(result, true));
                     }
                 }
-                let mut states = self.store.resource_states(owner_scope).await?;
-                let mut state = states[&resource.id].take();
-                if let Some(group) = selected {
-                    let v = state["groups"][group].take();
-                    state["groups"] = json!({group:v});
-                }
-                state
+                use crate::application::ports::connection_data::{
+                    ConnectionStateReader, StateQuery,
+                };
+                let mut states = self
+                    .store
+                    .read_connection_state(StateQuery {
+                        scope: owner_scope,
+                        resource: Some(resource.id.clone()),
+                        group: selected.map(str::to_owned),
+                    })
+                    .await?;
+                serde_json::to_value(states.remove(&resource.id).ok_or(PortError::NotFound)?)
+                    .map_err(|_| PortError::Unavailable)?
             } else {
                 let tool = self
                     .config

@@ -1,7 +1,9 @@
 //! Optional single-route runtime. Real storage/HTTP adapters, explicitly configured scope.
 mod bindings;
+pub mod builtin_queries;
 mod command_actions;
 pub mod config;
+mod connection_data;
 mod management;
 pub mod message_connections;
 pub mod routes;
@@ -39,10 +41,10 @@ pub struct Pipeline {
         std::collections::HashMap<Uuid, (String, super::connectors::runtime_status::RuntimeStatus)>,
     >,
     pub connection_io: Arc<tokio::sync::RwLock<()>>,
+    pub(crate) qq_group_names: super::connectors::qq::group_names::GroupNames,
     connections: Arc<std::sync::RwLock<message_connections::ConnectionSnapshot>>,
     registry: Arc<ConnectorRegistry>,
     commands: Arc<command_actions::CommandRuntime>,
-    pub agent: Option<crate::domain::agent::AgentBinding>,
     pub webhook: webhook::WebhookConfig,
     pub source: ConnectionScope,
     pub content: Option<Arc<super::content::FileContentStore>>,
@@ -154,26 +156,7 @@ impl Pipeline {
         if !config.additional_targets.is_empty() {
             binding["additional_targets"]=serde_json::Value::Array(config.additional_targets.iter().map(|t|serde_json::json!({"connection":t.connection_id,"destination":t.destination_id,"rule":t.rule_id,"url":t.url})).collect());
         }
-        let agent = config
-            .agent
-            .clone()
-            .map(|options| crate::domain::agent::AgentBinding {
-                source,
-                destination: Destination {
-                    id: config.destination_id,
-                    scope: target,
-                    replay_safety: ReplaySafety::NonIdempotent,
-                },
-                executor: config.principal_id,
-                config: options,
-            });
-        if let Some(a) = &agent {
-            binding["agent"] = serde_json::to_value(a).map_err(|_| PortError::Unavailable)?;
-        }
         store.bind_pipeline(binding).await?;
-        if let Some(a) = &agent {
-            store.bind_agent(a.clone()).await?;
-        }
 
         let sources: Vec<_> = std::iter::once(routes::RouteSource {
             routing: None,
@@ -219,6 +202,7 @@ impl Pipeline {
         let mut initial = crate::domain::managed_route::RouteSnapshot {
             revision: 1,
             routes: vec![crate::domain::managed_route::ManagedRoute {
+                message_types: crate::domain::managed_route::default_message_types(),
                 response: None,
                 routing: None,
                 id: config.rule_id,
@@ -251,6 +235,26 @@ impl Pipeline {
         let connections = Arc::new(std::sync::RwLock::new(
             store.message_connections(source).await?,
         ));
+        for connection in &connections
+            .read()
+            .map_err(|_| PortError::Unavailable)?
+            .connections
+        {
+            store.configure_recent(
+                ConnectionScope {
+                    workspace_id: source.workspace_id,
+                    connection_id: connection.id,
+                },
+                connection
+                    .enabled
+                    .then(|| {
+                        connection
+                            .recent_source()
+                            .map(|source| (connection.recent_messages.clone(), source))
+                    })
+                    .flatten(),
+            );
+        }
         let mut snapshot = store.initialize_routes(source, initial).await?;
         for route in &mut snapshot.routes {
             let id = route.source_id.unwrap_or(source.connection_id);
@@ -320,17 +324,7 @@ impl Pipeline {
             principal: config.principal_id,
             routes: std::sync::RwLock::new(snapshot),
         });
-        let policy: Arc<dyn crate::application::ports::identity::PolicyEngine> = if agent.is_some()
-        {
-            Arc::new(crate::application::services::workspaces::WorkspacePolicy {
-                repository: store.clone(),
-                inner: bindings.clone(),
-                read_only_tools: Default::default(),
-            })
-        } else {
-            bindings.clone()
-        };
-        let governance = Arc::new(Governance::new(policy, store.clone()));
+        let governance = Arc::new(Governance::new(bindings.clone(), store.clone()));
         let commands = Arc::new(command_actions::CommandRuntime {
             bindings: bindings.clone(),
             store: store.clone(),
@@ -368,11 +362,11 @@ impl Pipeline {
         let registry = Arc::new(registry);
         Ok(Self {
             connection_status: Default::default(),
+            qq_group_names: Default::default(),
             connection_io: Arc::new(tokio::sync::RwLock::new(())),
             commands,
             connections,
             registry: registry.clone(),
-            agent,
             webhook: config.webhook,
             source,
             content,
@@ -585,9 +579,6 @@ impl Pipeline {
             _ = stop.cancelled() => return Ok(()),
             lane = self.routing_lane.lock() => lane,
         };
-        if self.agent.is_some() {
-            self.store.expire_agent_jobs().await?;
-        }
         for (scope, id) in self.store.unrouted(self.source.workspace_id, 100).await? {
             if stop.is_cancelled() {
                 return Ok(());
@@ -599,12 +590,6 @@ impl Pipeline {
             }
             let mut ctx = self.context(Uuid::new_v4(), stop.clone());
             ctx.operation.scope = scope;
-            if self.agent.is_some() {
-                if let Err(error) = self.store.queue_agent_event(id).await {
-                    self.store.record_routing_failure(scope, id, error).await?;
-                }
-                continue;
-            }
             match self.routing.route(&ctx, id).await {
                 Ok(report) if !report.audit_recorded => {
                     tracing::error!(event="pipeline.route_audit_failed",event_id=%id)

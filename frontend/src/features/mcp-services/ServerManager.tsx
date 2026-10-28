@@ -7,11 +7,12 @@ import { IconButton } from '../../shared/ui/IconButton';
 import { CopyButton } from '../../shared/ui/CopyButton';
 import { t } from '../../shared/i18n';
 import { ControlError, errorMessage, type ControlApi } from './api';
-import type { ControlView, McpServer, ServerChange, ServerDeletion, ServerAuth, ContentScope, CapabilityKind } from './types';
+import type { ControlView, McpServer, ServerChange, ServerDeletion, ServerAuth, ContentScope, CapabilityKind, BuiltinScope } from './types';
 
 import { CapabilityEditor } from './CapabilityEditor';
 import { ServerDetails } from './ServerDetails';
 import { ServerAuthFields } from './ServerAuthFields';
+import { BuiltinEditor } from './BuiltinEditor';
 
 type Operation = { id: string; kind: 'save'; input: ServerChange } | { id: string; kind: 'delete'; input: ServerDeletion };
 export function ServerManager({ api, view, locked, changed, onBlock }: {
@@ -19,6 +20,7 @@ export function ServerManager({ api, view, locked, changed, onBlock }: {
 }) {
   const [items, setItems] = useState<McpServer[]>([]), [loading, setLoading] = useState(true);
   const [editor, setEditor] = useState<{ id: string; existing: McpServer | null } | null>(null);
+  const [builtinScope, setBuiltinScope] = useState<BuiltinScope>({tools:[],connections:[],conversations:[],qq_send_conversations:[]});
   const [scope, setScope] = useState<ContentScope>({resources:[],prompts:[]});
   const [description, setDescription] = useState('');
   const [editorAddress, setEditorAddress] = useState('');
@@ -52,6 +54,7 @@ export function ServerManager({ api, view, locked, changed, onBlock }: {
     opener.current = document.activeElement as HTMLElement;
     setProblem(null); setMessage(''); setName(server?.name ?? ''); setEnabled(server?.enabled ?? true);
     setScope(server?.content_scope ?? {resources:[],prompts:[]});
+    setBuiltinScope(server?.builtin_scope ?? {tools:[],connections:[],conversations:[],qq_send_conversations:[]});
     setDescription(server?.description ?? ''); setAuth(server?.auth ?? {mode:'inherited'});
     const id = server?.id ?? crypto.randomUUID();
     setEditorAddress(server ? address(server) : new URL(`/mcp/${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`,generatedOrigin()).href);
@@ -75,7 +78,7 @@ export function ServerManager({ api, view, locked, changed, onBlock }: {
     if (!editor) return;
     void run({id:editor.id,kind:'save',input:{operation_id:crypto.randomUUID(),expected_revision:editor.existing?.revision ?? 0,
       ...(view.content && (!editor.existing || editor.existing.content_scope) ? {content_scope:scope,expected_content_revision:view.content.revision}:{}),
-      expected_tool_revision:editor.existing?.tool_revision ?? 0,name:name.trim(),description:description.trim(),public_url:editorAddress.trim(),auth,transport:'streamable_http',enabled,exposed_tools:selected}});
+      builtin_scope:builtinScope,expected_tool_revision:editor.existing?.tool_revision ?? 0,name:name.trim(),description:description.trim(),public_url:editorAddress.trim(),auth,transport:'streamable_http',enabled,exposed_tools:selected}});
   }
   function toggle(server: McpServer, next: boolean) {
     void run({ id: server.id, kind: 'save', input: { operation_id: crypto.randomUUID(), expected_revision: server.revision,
@@ -126,6 +129,7 @@ export function ServerManager({ api, view, locked, changed, onBlock }: {
               <label className="ui-field server-endpoint"><span>{t('MCP 地址')}</span><Input type="url" required maxLength={2048} value={editorAddress} onChange={event => { const value=event.target.value; setEditorAddress(value); if (auth.mode==='oauth') setAuth({...auth,resource:value}); }} /></label>
               <div className="server-protocol-fields"><div className="ui-field"><span>{t('传输方式')}</span><p className="server-transport-value">Streamable HTTP</p></div><ServerAuthFields existingMode={editor.existing?.authentication} value={auth} change={next=>setAuth(next.mode==='oauth' && !next.resource ? {...next,resource:editorAddress} : next)} /></div>
               <div className="section-bar capability-heading"><h3>{t('开放能力')}</h3></div>
+              <BuiltinEditor value={builtinScope} change={setBuiltinScope} />
               <CapabilityEditor view={view} tools={selected} scope={scope} disabled={disabled} changeTools={setSelected} changeScope={setScope} />
             </fieldset>
           </div>

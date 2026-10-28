@@ -1,3 +1,5 @@
+> 历史设计记录：涉及 Agent 任务、收件箱和推理编排的内容已经被 [架构收敛说明](scope-convergence.md) 取代；实际功能以当前代码为准。
+
 # Synquay 管理台设计
 
 设计基线，2026-10-25。管理台面向连接程序、发布 MCP 能力、转发消息和排查运行问题的管理员。设计目标：**简洁、易用、正式、克制**。本文确定信息架构、关键流程和实现边界；交互草图中的连接、消息和发布记录均为示例数据。
@@ -145,7 +147,7 @@ AI 返回结果与回复投递分别显示状态。没有 Agent 领取时显示�
 6. 键盘可完成主流程；320px 宽度和深浅主题下没有主要操作被遮挡。
 7. 空态、加载、无权限、失联、版本冲突均有明确反馈；正式界面仅展示已经接通的真实功能。
 
-相关架构：[管理接口与 SDK](modules/15-management-sdk.md)、[OAuth 接入与在线配置发布](oauth-publication.md)、[路由与处理计划](modules/07-routing.md)、[投递与恢复](modules/08-delivery.md)、[Agent 收件箱与任务](modules/10-agent-jobs.md)。
+相关架构：[管理接口与 SDK](modules/15-management-sdk.md)、[OAuth 接入与在线配置发布](oauth-publication.md)、[路由与处理计划](modules/07-routing.md)、[投递与恢复](modules/08-delivery.md)。
 
 
 ## 多 MCP 服务与连接端点（2026-10-25）
