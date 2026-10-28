@@ -256,7 +256,7 @@ impl InvocationService {
                         request_id: ctx.operation.request_id,
                         workspace_id: ctx.identity.workspace_id,
                         principal_id: ctx.identity.principal_id,
-                        action: action,
+                        action,
                         resource,
                         phase,
                         occurred_at: std::time::SystemTime::now(),

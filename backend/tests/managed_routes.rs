@@ -140,7 +140,7 @@ async fn managed_paths_filter_fanout_stop_resume_delete_and_restart_without_repl
     // Rebuild a v18 fixture with retained history, then verify aggregate backfill.
     drop(p);
     let sql = rusqlite::Connection::open(&path).unwrap();
-    sql.execute_batch("DROP TRIGGER count_received; DROP TRIGGER count_submitted; DROP TABLE message_totals; ALTER TABLE deliveries DROP COLUMN counted_submitted; PRAGMA user_version=18;").unwrap();
+    sql.execute_batch("DROP TRIGGER count_received; DROP TRIGGER count_submitted; DROP TABLE message_totals; ALTER TABLE deliveries DROP COLUMN counted_submitted; ALTER TABLE connection_conversations DROP COLUMN display_name; PRAGMA user_version=18;").unwrap();
     let p = Arc::new(
         Pipeline::build(make_config(), TOKEN.into(), None)
             .await

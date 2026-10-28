@@ -76,14 +76,14 @@ impl GroupNames {
         let entry = {
             let mut cache = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             let key = (connection, group.to_owned());
-            if !cache.contains_key(&key) && cache.len() >= CAPACITY {
-                if let Some(oldest) = cache
+            if !cache.contains_key(&key)
+                && cache.len() >= CAPACITY
+                && let Some(oldest) = cache
                     .iter()
                     .min_by_key(|(_, entry)| entry.touched)
                     .map(|(key, _)| key.clone())
-                {
-                    cache.remove(&oldest);
-                }
+            {
+                cache.remove(&oldest);
             }
             let value = cache.entry(key).or_insert_with(|| CacheEntry {
                 state: Arc::new(AsyncMutex::new(Entry::default())),

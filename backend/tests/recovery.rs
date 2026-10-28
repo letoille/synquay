@@ -338,7 +338,7 @@ async fn v2_migration_preserves_target_and_does_not_invent_attempt_history() {
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, u64>(0))
             .unwrap(),
-        20
+        21
     );
     assert_eq!(
         c.query_row("SELECT COUNT(*) FROM delivery_attempts", [], |r| r

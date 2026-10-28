@@ -21,8 +21,8 @@ def digest(path):
 
 def inspect(database):
     with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as c:
-        if c.execute("PRAGMA user_version").fetchone()[0] not in (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
-            raise ValueError("Expected schema v4 through v18")
+        if c.execute("PRAGMA user_version").fetchone()[0] not in (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21):
+            raise ValueError("Expected schema v4 through v21")
         if c.execute("PRAGMA quick_check").fetchall() != [("ok",)] or c.execute("PRAGMA foreign_key_check").fetchone():
             raise ValueError("Database integrity check failed")
         rows = c.execute("SELECT id,size,digest FROM content_objects WHERE state IN ('staged','available')").fetchall()
