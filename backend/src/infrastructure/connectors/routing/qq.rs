@@ -30,7 +30,7 @@ impl ConnectionRoutingAdapter for QqRouting<'_> {
         true
     }
     fn validate_command_senders(&self, senders: &[String]) -> Result<(), PortError> {
-        if ids_valid(senders) {
+        if senders.is_empty() || ids_valid(senders) {
             Ok(())
         } else {
             Err(invalid("invalid_command_action"))

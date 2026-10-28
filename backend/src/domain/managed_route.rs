@@ -6,6 +6,41 @@ use uuid::Uuid;
 pub struct RouteTarget {
     pub rule_id: Uuid,
     pub destination_id: Uuid,
+    #[serde(default)]
+    pub branch: RouteBranch,
+}
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteBranch {
+    #[default]
+    Legacy,
+    Forward,
+    Action,
+    Reply,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteAction {
+    pub destination_id: Uuid,
+    pub tool_id: String,
+    pub revision: u64,
+    pub allowed_senders: Vec<String>,
+    pub arguments: serde_json::Value,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteCommand {
+    pub id: Uuid,
+    pub mapping: super::command::CommandMapping,
+    pub action: RouteAction,
+    pub reply: Option<RouteReply>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RouteReply {
+    Fixed { text: String },
+    ActionResult,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ManagedRoute {
@@ -85,6 +120,15 @@ pub enum RouteProcessor {
         tool_id: String,
         revision: u64,
         allowed_senders: Vec<String>,
+    },
+    Combined {
+        forward: bool,
+        action: Option<Box<RouteAction>>,
+        reply: Option<RouteReply>,
+    },
+    CommandSet {
+        forward: bool,
+        commands: Vec<RouteCommand>,
     },
 }
 

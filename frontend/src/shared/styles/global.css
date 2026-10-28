@@ -1281,3 +1281,13 @@ input[type=checkbox] {
 .builtin-conversations .builtin-choice { display:flex; }
 .route-message-types { display:grid; gap:6px; margin:12px 0; }
 .route-message-types > small { color:var(--muted); }
+
+.route-process-edit { border: 0; padding: 2px 0; background: transparent; color: var(--accent, #4965d8); font: inherit; font-size: .8rem; cursor: pointer; }
+.route-process-edit:hover { text-decoration: underline; }
+.route-process-edit:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+
+@media (min-width: 760px) { .route-steps--processing { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.command-set-list { display: grid; gap: 16px; }
+.command-entry { border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.command-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

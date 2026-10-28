@@ -139,7 +139,7 @@ export function errorMessage(error: unknown): string {
   if (error.code === 'reply_requires_same_connection') return '回复来源会话需要使用同一个连接。';
   if (error.code === 'mqtt_filter_outside_subscription') return 'Topic 筛选必须在连接订阅范围内。';
   if (['invalid_qq_route_scope','unsupported_route_binding','invalid_route_binding','unknown_route_binding_target'].includes(error.code)) return '路由范围与连接不兼容，请重新选择。';
-  if (['invalid_command_action','unknown_connection_action','command_sender_unavailable','command_reply_requires_same_connection'].includes(error.code)) return '请检查能力、调用参数、用户授权和回复范围。';
+  if (['invalid_command_action','unknown_connection_action','command_sender_unavailable','command_reply_requires_same_connection','invalid_route_processing','invalid_direct_response','route_reply_unavailable'].includes(error.code)) return '请检查能力、调用参数、用户授权和回复范围。';
   if (error.code === 'invalid_command_mapping') return '指令映射无效，请检查匹配内容、消息字段和模板。';
   if (error.code === 'connection_grant_in_use') return '该名称被 OAuth 授权引用，请先调整服务端授权配置再重命名。';
   if (error.code === 'unknown_or_duplicate_content') return '资源或提示词不存在或重复，请刷新后重试。';

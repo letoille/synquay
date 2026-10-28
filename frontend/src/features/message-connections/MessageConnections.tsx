@@ -1,4 +1,5 @@
 import {CapabilitiesEditor} from './CapabilitiesEditor';
+import {blocksConnectionNavigation} from './navigation';
 import {ResourceStates} from './ResourceStates';
 import {connectionState,type Observations} from './observations';
 import { useEffect,useRef,useState } from 'react';
@@ -34,7 +35,7 @@ export function MessageConnections({storageKey,locked,onBlock,completed,onCapabi
  function changeConfig(config:Config){if(!editing)return;setServerFields(fields=>Object.fromEntries(Object.entries(fields).filter(([path])=>{if(!path.startsWith('config.'))return true;const read=(value:unknown)=>path.slice(7).split('.').reduce<unknown>((v,key)=>v&&typeof v==='object'?(v as Record<string,unknown>)[key]:undefined,value);return JSON.stringify(read(editing.config))===JSON.stringify(read(config));})));setEditing({...editing,config});}
  function clearField(path:string){setServerFields(fields=>{const next={...fields};delete next[path];return next;});}
 
- useEffect(()=>{onBlock(blocked);return()=>onBlock(false);},[blocked,onBlock]);
+ useEffect(()=>{onBlock(blocksConnectionNavigation({busy,pending:!!pending,confirmDiscard,blocked,capabilityPage}));return()=>onBlock(false);},[blocked,onBlock,busy,pending,confirmDiscard,capabilityPage]);
  useEffect(()=>{onCapabilityPage(capabilityPage);return()=>onCapabilityPage(false);},[capabilityPage,onCapabilityPage]);
  async function refresh(){try{const data=await request();setAvailable(data.available===true);setView(data.snapshot??null);setObservations(data.observations);}catch(e){if(e instanceof ConnectionError&&e.status===404){setAvailable(false);setView(null);}else setError('读取连接失败，请刷新重试。');}}
  useEffect(()=>{void refresh();},[]);

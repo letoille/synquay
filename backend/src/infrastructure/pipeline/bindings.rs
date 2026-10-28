@@ -96,9 +96,16 @@ impl RoutingRules for Bindings {
                         && r.event_type
                             .as_ref()
                             .is_none_or(|kind| *kind == event.event_type)
-                        && r.command
-                            .as_ref()
-                            .is_some_and(|c| c.capture(&event.payload).is_some())
+                        && (if matches!(
+                            r.processor,
+                            Some(crate::domain::managed_route::RouteProcessor::CommandSet { .. })
+                        ) {
+                            selected_command(r, event).is_some()
+                        } else {
+                            r.command
+                                .as_ref()
+                                .is_some_and(|c| c.capture(&event.payload).is_some())
+                        })
                 });
             let matches_type = |kinds: &[MessageType]| {
                 kinds.iter().any(|kind| match kind {
@@ -117,23 +124,63 @@ impl RoutingRules for Bindings {
                         && r.source_id.unwrap_or(self.source.connection_id)
                             == event.scope.connection_id
                         && self.source_matches(r, event)
-                        && r.command
-                            .as_ref()
-                            .is_none_or(|c| c.capture(&event.payload).is_some())
+                        && if matches!(
+                            r.processor,
+                            Some(crate::domain::managed_route::RouteProcessor::CommandSet { .. })
+                        ) {
+                            selected_command(r, event).is_some()
+                        } else {
+                            r.command
+                                .as_ref()
+                                .is_none_or(|c| c.capture(&event.payload).is_some())
+                        }
                         && r.event_type
                             .as_ref()
                             .is_none_or(|kind| *kind == event.event_type)
                 })
                 .flat_map(|r| {
-                    r.targets.iter().map(|t| RouteRule {
-                        workspace_id: self.source.workspace_id,
-                        rule_id: t.rule_id,
-                        revision: r.revision,
-                        destination_id: t.destination_id,
-                    })
+                    let selected = selected_command(r, event).map(|c| c.id);
+                    r.targets
+                        .iter()
+                        .filter(move |t| match &r.processor {
+                            Some(crate::domain::managed_route::RouteProcessor::CommandSet {
+                                ..
+                            }) if t.branch == crate::domain::managed_route::RouteBranch::Action => {
+                                selected.is_some_and(|id| {
+                                    t.rule_id
+                                        == super::command_actions::command_rule(r.id, id, false)
+                                })
+                            }
+                            Some(crate::domain::managed_route::RouteProcessor::CommandSet {
+                                ..
+                            }) if t.branch == crate::domain::managed_route::RouteBranch::Reply => {
+                                selected.is_some_and(|id| {
+                                    t.rule_id
+                                        == super::command_actions::command_rule(r.id, id, true)
+                                })
+                            }
+                            _ => true,
+                        })
+                        .map(|t| RouteRule {
+                            workspace_id: self.source.workspace_id,
+                            rule_id: t.rule_id,
+                            revision: r.revision,
+                            destination_id: t.destination_id,
+                        })
                 })
                 .collect())
         })
+    }
+}
+fn selected_command<'a>(
+    route: &'a crate::domain::managed_route::ManagedRoute,
+    event: &EventEnvelope,
+) -> Option<&'a crate::domain::managed_route::RouteCommand> {
+    match &route.processor {
+        Some(crate::domain::managed_route::RouteProcessor::CommandSet { commands, .. }) => commands
+            .iter()
+            .find(|c| c.mapping.capture(&event.payload).is_some()),
+        _ => None,
     }
 }
 impl MessageRenderer for Bindings {
@@ -161,29 +208,49 @@ impl MessageRenderer for Bindings {
                 .find(|r| {
                     r.revision == rule.revision
                         && r.targets.iter().any(|t| t.rule_id == rule.rule_id)
-                        && matches!(
+                        && (matches!(
                             r.processor,
                             Some(crate::domain::managed_route::RouteProcessor::Respond)
-                        )
+                        ) || r.targets.iter().any(|t| {
+                            t.rule_id == rule.rule_id
+                                && t.branch == crate::domain::managed_route::RouteBranch::Reply
+                        }))
                 })
                 .cloned();
             if let Some(r) = response_route {
-                let mapping = r.command.as_ref().ok_or(PortError::PermissionDenied)?;
+                let selected = selected_command(&r, event);
+                let mapping = selected
+                    .map(|c| &c.mapping)
+                    .or(r.command.as_ref())
+                    .ok_or(PortError::PermissionDenied)?;
                 let captured = mapping
                     .capture(&event.payload)
                     .ok_or(PortError::PermissionDenied)?;
-                let (_, value) = mapping
-                    .render(&event.payload, &captured)
-                    .map_err(|_| PortError::InvalidInput {
-                        code: "command_mapping_failed",
-                    })?
-                    .ok_or(PortError::Unsupported)?;
-                let text = value["content"]
-                    .as_str()
-                    .filter(|s| !s.trim().is_empty() && s.len() <= 4000)
-                    .ok_or(PortError::InvalidInput {
-                        code: "invalid_direct_response",
-                    })?;
+                let text = if let Some(crate::domain::managed_route::RouteReply::Fixed { text }) =
+                    selected.and_then(|c| c.reply.as_ref())
+                {
+                    text.clone()
+                } else if let Some(crate::domain::managed_route::RouteProcessor::Combined {
+                    reply: Some(crate::domain::managed_route::RouteReply::Fixed { text }),
+                    ..
+                }) = &r.processor
+                {
+                    text.clone()
+                } else {
+                    let (_, value) = mapping
+                        .render(&event.payload, &captured)
+                        .map_err(|_| PortError::InvalidInput {
+                            code: "command_mapping_failed",
+                        })?
+                        .ok_or(PortError::Unsupported)?;
+                    value["content"]
+                        .as_str()
+                        .filter(|s| !s.trim().is_empty() && s.len() <= 4000)
+                        .ok_or(PortError::InvalidInput {
+                            code: "invalid_direct_response",
+                        })?
+                        .to_owned()
+                };
                 let catalog = self
                     .connections
                     .read()
@@ -193,21 +260,58 @@ impl MessageRenderer for Bindings {
                     .iter()
                     .find(|c| c.id == event.scope.connection_id && c.enabled)
                     .ok_or(PortError::PermissionDenied)?;
-                return adapter(&source.config).command_reply(event, text.into(), None);
+                let selected_action = selected.map(|c| &c.action);
+                let combined_action =
+                    if let Some(crate::domain::managed_route::RouteProcessor::Combined {
+                        action: Some(action),
+                        ..
+                    }) = &r.processor
+                    {
+                        Some(action.as_ref())
+                    } else {
+                        None
+                    };
+                let consumed = if let Some(action) = selected_action.or(combined_action) {
+                    if action.destination_id == source.send_id()
+                        && super::command_actions::definitions(&source.config)
+                            .iter()
+                            .any(|a| a.definition.id == action.tool_id && a.consumes_reply)
+                    {
+                        adapter(&source.config).resolve_target(
+                            r.routing
+                                .as_ref()
+                                .and_then(|o| o.targets.get(&action.destination_id)),
+                            event,
+                            true,
+                        )?
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                return adapter(&source.config).command_reply(event, text, consumed.as_ref());
             }
             let action_route=self.routes.read().map_err(|_|PortError::Unavailable)?.routes.iter().find(|r|
                 r.revision==rule.revision && r.targets.iter().any(|t|t.rule_id==rule.rule_id)
-                && matches!(r.processor,Some(crate::domain::managed_route::RouteProcessor::InvokeCapability{..}))).map(|r|r.id);
-            if let Some(route_id) = action_route {
+                && (matches!(r.processor,Some(crate::domain::managed_route::RouteProcessor::InvokeCapability{..})) || r.targets.iter().any(|t|t.rule_id==rule.rule_id && t.branch==crate::domain::managed_route::RouteBranch::Action))).map(|r|(r.id,matches!(r.processor,Some(crate::domain::managed_route::RouteProcessor::CommandSet{..}))));
+            if let Some((route_id, is_command_set)) = action_route {
                 return super::command_actions::CommandJob {
                     route_id,
                     revision: rule.revision,
                     source: event.scope,
                     event_id: event.event_id,
+                    rule_id: is_command_set.then_some(rule.rule_id),
                 }
                 .message();
             }
             let destination_binding = self.target_binding(event, rule)?;
+            // Reserve sequence 3 for a forward back to the same QQ conversation when
+            // this route may also issue an action and a reply (sequences 1 and 2).
+            let sequence = destination_binding.as_ref().is_some_and(|b| b.adapter == "qq" && b.config.get("msg_id").is_some()) && self.routes.read().map_err(|_| PortError::Unavailable)?.routes.iter().any(|r| {
+                r.revision == rule.revision && r.targets.iter().any(|t| t.rule_id == rule.rule_id && t.branch == crate::domain::managed_route::RouteBranch::Forward)
+                && (matches!(&r.processor, Some(crate::domain::managed_route::RouteProcessor::Combined { action, reply, .. }) if action.is_some() || reply.is_some()) || matches!(r.processor,Some(crate::domain::managed_route::RouteProcessor::CommandSet{..})))
+            });
             let command = self
                 .routes
                 .read()
@@ -218,7 +322,11 @@ impl MessageRenderer for Bindings {
                     r.revision == rule.revision
                         && r.targets.iter().any(|t| t.rule_id == rule.rule_id)
                 })
-                .and_then(|r| r.command.clone());
+                .and_then(|r| {
+                    selected_command(r, event)
+                        .map(|c| c.mapping.clone())
+                        .or_else(|| r.command.clone())
+                });
             if let Some(command) = command {
                 let captured = command
                     .capture(&event.payload)
@@ -229,17 +337,19 @@ impl MessageRenderer for Bindings {
                         code: "command_mapping_failed",
                     })?
                 {
-                    return Ok(Message {
+                    let mut message = Message {
                         destination_binding: destination_binding.clone(),
                         parts: vec![ContentPart::Json(serde_json::json!({
                             "event_id": event.event_id, "source_event_id": event.source_event_id,
                             "event_type": event_type, "payload": payload
                         }))],
                         reply_route_id: None,
-                    });
+                    };
+                    set_forward_sequence(&mut message, sequence);
+                    return Ok(message);
                 }
             }
-            match &event.payload {
+            let mut message = match &event.payload {
                 EventPayload::Json(value) => Ok(Message {
                     destination_binding: destination_binding.clone(),
                     parts: vec![ContentPart::Json(
@@ -258,8 +368,30 @@ impl MessageRenderer for Bindings {
                     Ok(message)
                 }
                 _ => Err(PortError::Unsupported),
-            }
+            }?;
+            set_forward_sequence(&mut message, sequence);
+            Ok(message)
         })
+    }
+}
+
+fn set_forward_sequence(message: &mut Message, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    if let [ContentPart::Json(value)] = message.parts.as_mut_slice() {
+        let payload = if value.get("payload").is_some() {
+            &mut value["payload"]
+        } else {
+            value
+        };
+        if let Some(fields) = payload.as_object_mut() {
+            fields.insert("msg_seq".into(), serde_json::json!(3));
+        }
+    } else if let [ContentPart::Text(text)] = message.parts.as_slice() {
+        message.parts = vec![ContentPart::Json(
+            serde_json::json!({"content": text, "msg_seq": 3}),
+        )];
     }
 }
 
@@ -338,10 +470,54 @@ pub(super) fn validate_routing(
             .iter()
             .find(|c| c.send_id() == target.destination_id)
         {
-            if !matches!(
-                route.processor,
-                Some(crate::domain::managed_route::RouteProcessor::Respond)
-            ) && !matches!(&route.processor,Some(crate::domain::managed_route::RouteProcessor::InvokeCapability{tool_id,..}) if binding.is_none() && super::command_actions::definitions(&c.config).iter().any(|a|a.definition.id==*tool_id&&!a.target_required))
+            let combined_special = match &route.processor {
+                Some(crate::domain::managed_route::RouteProcessor::Combined { action, .. }) => {
+                    match target.branch {
+                        crate::domain::managed_route::RouteBranch::Reply => true,
+                        crate::domain::managed_route::RouteBranch::Action => {
+                            binding.is_none()
+                                && action.as_ref().is_some_and(|action| {
+                                    super::command_actions::definitions(&c.config)
+                                        .iter()
+                                        .any(|a| {
+                                            a.definition.id == action.tool_id && !a.target_required
+                                        })
+                                })
+                        }
+                        _ => false,
+                    }
+                }
+                Some(crate::domain::managed_route::RouteProcessor::CommandSet {
+                    commands, ..
+                }) => match target.branch {
+                    crate::domain::managed_route::RouteBranch::Reply => true,
+                    crate::domain::managed_route::RouteBranch::Action => {
+                        binding.is_none()
+                            && commands
+                                .iter()
+                                .find(|cmd| {
+                                    super::command_actions::command_rule(route.id, cmd.id, false)
+                                        == target.rule_id
+                                })
+                                .is_some_and(|cmd| {
+                                    super::command_actions::definitions(&c.config)
+                                        .iter()
+                                        .any(|a| {
+                                            a.definition.id == cmd.action.tool_id
+                                                && !a.target_required
+                                        })
+                                })
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if !combined_special
+                && !matches!(
+                    route.processor,
+                    Some(crate::domain::managed_route::RouteProcessor::Respond)
+                )
+                && !matches!(&route.processor,Some(crate::domain::managed_route::RouteProcessor::InvokeCapability{tool_id,..}) if binding.is_none() && super::command_actions::definitions(&c.config).iter().any(|a|a.definition.id==*tool_id&&!a.target_required))
             {
                 adapter(&c.config).validate_target(binding, c.id == source)?;
             }

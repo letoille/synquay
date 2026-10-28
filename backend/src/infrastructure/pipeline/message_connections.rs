@@ -357,6 +357,22 @@ impl Pipeline {
                         if lost_send {
                             r.targets.retain(|t| t.destination_id != old.send_id());
                             if let Some(binding) = &mut r.routing { binding.targets.remove(&old.send_id()); }
+                            if let Some(crate::domain::managed_route::RouteProcessor::Combined { forward, action, reply }) = &mut r.processor {
+                                *forward = r.targets.iter().any(|t| t.branch == crate::domain::managed_route::RouteBranch::Forward);
+                                if action.as_ref().is_some_and(|a| a.destination_id == old.send_id()) {
+                                    *action = None;
+                                    if matches!(reply, Some(crate::domain::managed_route::RouteReply::ActionResult)) { *reply = None; }
+                                }
+                            }
+                            if let Some(crate::domain::managed_route::RouteProcessor::CommandSet { forward, commands }) = &mut r.processor {
+                                *forward = r.targets.iter().any(|t|t.branch==crate::domain::managed_route::RouteBranch::Forward);
+                                let removed:Vec<_>=commands.iter().filter(|c|c.action.destination_id==old.send_id()).map(|c|c.id).collect();
+                                commands.retain(|c|!removed.contains(&c.id));
+                                r.targets.retain(|t|!removed.iter().any(|id|t.rule_id==super::command_actions::command_rule(r.id,*id,true)));
+                                if let Some(routing)=&mut r.routing {routing.targets.retain(|id,_|r.targets.iter().any(|t|t.destination_id==*id));}
+                                if r.source_id==Some(old.id) {for command in commands.iter_mut(){command.reply=None;}}
+                                if commands.is_empty(){return false;}
+                            }
                         }
                         if r.targets.is_empty() {
                             return false;
@@ -378,6 +394,23 @@ impl Pipeline {
                         if let Some(action)=actions.iter().find(|a|a.definition.id==*tool_id){
                             if *revision!=action.revision{*revision=action.revision;r.enabled=false;touched=true;}
                         }else{touched=true;return false}
+                    }
+                    if let Some(crate::domain::managed_route::RouteProcessor::Combined { action: Some(action), .. }) = &mut r.processor && action.destination_id == old.send_id() {
+                        if let Some(updated)=actions.iter().find(|a|a.definition.id==action.tool_id) {
+                            if action.revision != updated.revision {action.revision=updated.revision;r.enabled=false;touched=true;}
+                        } else {touched=true;return false}
+                    }
+                    if let Some(crate::domain::managed_route::RouteProcessor::CommandSet { commands, .. }) = &mut r.processor {
+                        let mut removed=Vec::new();
+                        for command in commands.iter_mut().filter(|c|c.action.destination_id==old.send_id()) {
+                            if let Some(updated)=actions.iter().find(|a|a.definition.id==command.action.tool_id) {
+                                if command.action.revision!=updated.revision {command.action.revision=updated.revision;r.enabled=false;touched=true;}
+                            } else {removed.push(command.id);touched=true;}
+                        }
+                        commands.retain(|c|!removed.contains(&c.id));
+                        r.targets.retain(|t|!removed.iter().any(|id|t.rule_id==super::command_actions::command_rule(r.id,*id,false)||t.rule_id==super::command_actions::command_rule(r.id,*id,true)));
+                        if let Some(routing)=&mut r.routing {routing.targets.retain(|id,_|r.targets.iter().any(|t|t.destination_id==*id));}
+                        if commands.is_empty(){return false;}
                     }
                     true
                 });

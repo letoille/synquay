@@ -28,6 +28,7 @@ struct Fake {
     fail_reply: AtomicBool,
     actors: Mutex<Vec<Uuid>>,
     replies: Mutex<Vec<Message>>,
+    tools: Mutex<Vec<String>>,
 }
 impl ToolExecutor for Fake {
     fn discover(&self, _: OperationContext) -> PortFuture<'_, Vec<ToolDefinition>> {
@@ -37,7 +38,12 @@ impl ToolExecutor for Fake {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.actors.lock().unwrap().push(ctx.principal_id);
-            assert_eq!(call.arguments, json!({"content":"hello"}));
+            self.tools.lock().unwrap().push(call.tool_id.clone());
+            if call.tool_id == "qq.bot_info" {
+                assert_eq!(call.arguments, json!({}));
+            } else {
+                assert_eq!(call.arguments, json!({"content":"hello"}));
+            }
             if self.unknown.load(Ordering::SeqCst) {
                 return Err(PortError::OutcomeUnknown);
             }
@@ -253,6 +259,7 @@ impl Fixture {
             revision: 1,
             source: self.event.scope,
             event_id: self.event.event_id,
+            rule_id: None,
         }
         .message()
         .unwrap()
@@ -332,6 +339,33 @@ async fn payload_identity_cannot_authorize_a_command() {
     let db = rusqlite::Connection::open(f.dir.path().join("test.db")).unwrap();
     let count:u64=db.query_row("SELECT COUNT(*) FROM audit WHERE json_extract(record,'$.action')='InvokeTool' AND json_extract(record,'$.phase')='Denied'",[],|r|r.get(0)).unwrap();
     assert_eq!(count, 1);
+}
+#[tokio::test]
+async fn empty_route_sender_list_allows_verified_users_but_keeps_connection_restrictions() {
+    for (restricted, expected_calls) in [(false, 1), (true, 0)] {
+        let f = Fixture::new(false).await;
+        if let Some(RouteProcessor::InvokeCapability {
+            allowed_senders, ..
+        }) = &mut f.bindings.routes.write().unwrap().routes[0].processor
+        {
+            allowed_senders.clear();
+        }
+        if restricted {
+            let mut connections = f.bindings.connections.write().unwrap();
+            let ConnectionConfig::QqBot(qq) = &mut connections.connections[0].config else {
+                panic!()
+            };
+            qq.allowed_senders = vec!["another_member".into()];
+        }
+        f.queue().await;
+        let outcome = f.run().await.outcome;
+        if restricted {
+            assert!(matches!(outcome, DeliveryOutcome::Failed { .. }));
+        } else {
+            assert!(matches!(outcome, DeliveryOutcome::Submitted(_)));
+        }
+        assert_eq!(f.count(), expected_calls);
+    }
 }
 #[tokio::test]
 async fn schema_validation_precedes_external_effects() {
@@ -418,14 +452,22 @@ async fn stored_result_survives_executor_restart() {
     assert_eq!(f.count(), 1);
 }
 #[tokio::test]
-async fn validation_rejects_missing_grants_versions_and_implicit_arguments() {
+async fn validation_rejects_invalid_grants_versions_and_implicit_arguments() {
     let f = Fixture::new(false).await;
     let catalog = f.bindings.connections.read().unwrap();
+    let mut unrestricted = f.route.clone();
+    if let Some(RouteProcessor::InvokeCapability {
+        allowed_senders, ..
+    }) = &mut unrestricted.processor
+    {
+        allowed_senders.clear();
+    }
+    assert!(validate(&catalog, &unrestricted, f.event.scope.connection_id).is_ok());
     for processor in [
         RouteProcessor::InvokeCapability {
             tool_id: "qq.send_text".into(),
             revision: 1,
-            allowed_senders: vec![],
+            allowed_senders: vec!["invalid sender".into()],
         },
         RouteProcessor::InvokeCapability {
             tool_id: "qq.send_text".into(),
@@ -444,6 +486,7 @@ async fn validation_rejects_missing_grants_versions_and_implicit_arguments() {
     r.targets.push(RouteTarget {
         rule_id: Uuid::new_v4(),
         destination_id: Uuid::new_v4(),
+        branch: Default::default(),
     });
     assert!(validate(&catalog, &r, f.event.scope.connection_id).is_err());
 }
@@ -499,4 +542,366 @@ async fn source_response_requires_a_supported_processor_and_source_destination()
     route.processor = Some(RouteProcessor::Respond);
     route.targets[0].destination_id = Uuid::new_v4();
     assert!(validate(&catalog, &route, f.event.scope.connection_id).is_err());
+}
+
+#[tokio::test]
+async fn combined_branches_share_destination_but_keep_distinct_jobs_and_arguments() {
+    use crate::domain::managed_route::{RouteAction, RouteBranch, RouteReply};
+    for result_reply in [false, true] {
+        let f = Fixture::new(false).await;
+        {
+            let mut snapshot = f.bindings.routes.write().unwrap();
+            let route = &mut snapshot.routes[0];
+            let destination_id = route.targets[0].destination_id;
+            route.targets = vec![
+                RouteTarget {
+                    rule_id: Uuid::new_v4(),
+                    destination_id,
+                    branch: RouteBranch::Forward,
+                },
+                RouteTarget {
+                    rule_id: Uuid::new_v4(),
+                    destination_id,
+                    branch: RouteBranch::Action,
+                },
+            ];
+            if !result_reply {
+                route.targets.push(RouteTarget {
+                    rule_id: Uuid::new_v4(),
+                    destination_id,
+                    branch: RouteBranch::Reply,
+                });
+            }
+            route.processor = Some(RouteProcessor::Combined {
+                forward: true,
+                action: Some(Box::new(RouteAction {
+                    destination_id,
+                    tool_id: "qq.send_text".into(),
+                    revision: 1,
+                    allowed_senders: vec!["member_A".into()],
+                    arguments: json!({"content":{"$command":"arguments"}}),
+                })),
+                reply: Some(if result_reply {
+                    RouteReply::ActionResult
+                } else {
+                    RouteReply::Fixed {
+                        text: "received".into(),
+                    }
+                }),
+            });
+            route.command.as_mut().unwrap().output = CommandOutput::Original;
+            super::super::bindings::validate_routing(
+                &f.bindings.connections.read().unwrap(),
+                route,
+                f.event.scope.connection_id,
+            )
+            .unwrap();
+        }
+        f.queue().await;
+        for _ in 0..3 {
+            assert!(matches!(
+                f.run().await.outcome,
+                DeliveryOutcome::Submitted(_)
+            ));
+        }
+        assert_eq!(f.count(), 1);
+        assert!(f.replay().await.is_ok());
+        assert_eq!(f.count(), 1);
+        let messages = f.fake.replies.lock().unwrap();
+        assert_eq!(messages.len(), 2);
+        let reply = messages
+            .iter()
+            .find_map(|message| match message.parts.as_slice() {
+                [ContentPart::Json(value)] if value.get("msg_seq").is_some() => Some(value),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            reply["content"],
+            if result_reply { "done" } else { "received" }
+        );
+        assert_eq!(reply["msg_seq"], 2);
+        assert!(messages.iter().any(|message| matches!(message.parts.as_slice(), [ContentPart::Json(v)] if v["payload"]["content"] == "/send hello" && v["payload"]["msg_seq"] == 3)));
+    }
+}
+
+#[tokio::test]
+async fn combined_result_reply_requires_an_action() {
+    let f = Fixture::new(false).await;
+    let mut route = f.route.clone();
+    route.processor = Some(RouteProcessor::Combined {
+        forward: false,
+        action: None,
+        reply: Some(RouteReply::ActionResult),
+    });
+    assert!(
+        validate(
+            &f.bindings.connections.read().unwrap(),
+            &route,
+            f.event.scope.connection_id
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn denied_combined_action_does_not_prevent_forward_or_fixed_reply() {
+    use crate::domain::managed_route::{RouteAction, RouteBranch, RouteReply};
+    let f = Fixture::new(false).await;
+    {
+        let mut snapshot = f.bindings.routes.write().unwrap();
+        let route = &mut snapshot.routes[0];
+        let destination_id = route.targets[0].destination_id;
+        route.targets = [
+            RouteBranch::Forward,
+            RouteBranch::Action,
+            RouteBranch::Reply,
+        ]
+        .into_iter()
+        .map(|branch| RouteTarget {
+            rule_id: Uuid::new_v4(),
+            destination_id,
+            branch,
+        })
+        .collect();
+        route.processor = Some(RouteProcessor::Combined {
+            forward: true,
+            action: Some(Box::new(RouteAction {
+                destination_id,
+                tool_id: "qq.send_text".into(),
+                revision: 1,
+                allowed_senders: vec!["someone_else".into()],
+                arguments: json!({"content":{"$command":"arguments"}}),
+            })),
+            reply: Some(RouteReply::Fixed {
+                text: "received".into(),
+            }),
+        });
+        route.command.as_mut().unwrap().output = CommandOutput::Original;
+        super::super::bindings::validate_routing(
+            &f.bindings.connections.read().unwrap(),
+            route,
+            f.event.scope.connection_id,
+        )
+        .unwrap();
+    }
+    f.queue().await;
+    let mut submitted = 0;
+    let mut failed = 0;
+    for _ in 0..3 {
+        match f.run().await.outcome {
+            DeliveryOutcome::Submitted(_) => submitted += 1,
+            DeliveryOutcome::Failed { .. } => failed += 1,
+            _ => panic!("unexpected delivery outcome"),
+        }
+    }
+    assert_eq!((submitted, failed, f.count()), (2, 1, 0));
+    assert_eq!(f.fake.replies.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn command_set_selects_only_the_first_matching_operation() {
+    use crate::domain::managed_route::{RouteAction, RouteBranch, RouteCommand};
+    for (text, expected) in [
+        ("/send hello", "qq.send_text"),
+        ("/status", "qq.bot_info"),
+        ("/unknown", ""),
+    ] {
+        let mut f = Fixture::new(false).await;
+        let (send_id, status_id, overlap_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        {
+            let mut snapshot = f.bindings.routes.write().unwrap();
+            let route = &mut snapshot.routes[0];
+            let destination_id = route.targets[0].destination_id;
+            let command = |id, trigger: &str, tool: &str, arguments| RouteCommand {
+                id,
+                mapping: CommandMapping {
+                    text_pointer: "/content".into(),
+                    trigger: trigger.into(),
+                    mode: if trigger == "/send" {
+                        CommandMode::Prefix
+                    } else {
+                        CommandMode::Exact
+                    },
+                    output: CommandOutput::Original,
+                },
+                action: RouteAction {
+                    destination_id,
+                    tool_id: tool.into(),
+                    revision: 1,
+                    allowed_senders: vec![],
+                    arguments,
+                },
+                reply: None,
+            };
+            route.processor = Some(RouteProcessor::CommandSet {
+                forward: false,
+                commands: vec![
+                    command(
+                        send_id,
+                        "/send",
+                        "qq.send_text",
+                        json!({"content":{"$command":"arguments"}}),
+                    ),
+                    command(status_id, "/status", "qq.bot_info", json!({})),
+                    command(overlap_id, "/send hello", "qq.bot_info", json!({})),
+                ],
+            });
+            route.command = None;
+            route.targets = vec![
+                RouteTarget {
+                    rule_id: command_rule(route.id, send_id, false),
+                    destination_id,
+                    branch: RouteBranch::Action,
+                },
+                RouteTarget {
+                    rule_id: command_rule(route.id, status_id, false),
+                    destination_id,
+                    branch: RouteBranch::Action,
+                },
+                RouteTarget {
+                    rule_id: command_rule(route.id, overlap_id, false),
+                    destination_id,
+                    branch: RouteBranch::Action,
+                },
+            ];
+            super::super::bindings::validate_routing(
+                &f.bindings.connections.read().unwrap(),
+                route,
+                f.event.scope.connection_id,
+            )
+            .unwrap();
+        }
+        f.event.payload = EventPayload::Json(json!({"content":text}));
+        let rules = f.bindings.matching(&f.event).await.unwrap();
+        assert_eq!(rules.len(), usize::from(!expected.is_empty()));
+        f.queue().await;
+        if !expected.is_empty() {
+            assert!(matches!(
+                f.run().await.outcome,
+                DeliveryOutcome::Submitted(_)
+            ));
+        }
+        let seen = f.fake.tools.lock().unwrap();
+        if expected.is_empty() {
+            assert!(seen.is_empty());
+        } else {
+            assert_eq!(seen.as_slice(), [expected]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn command_set_fixed_reply_uses_matching_command_and_trusted_context() {
+    use crate::domain::managed_route::{RouteAction, RouteBranch, RouteCommand, RouteReply};
+    let f = Fixture::new(false).await;
+    {
+        let mut snapshot = f.bindings.routes.write().unwrap();
+        let route = &mut snapshot.routes[0];
+        let destination_id = route.targets[0].destination_id;
+        let command_id = Uuid::new_v4();
+        let mapping = route.command.clone().unwrap();
+        route.processor = Some(RouteProcessor::CommandSet {
+            forward: false,
+            commands: vec![RouteCommand {
+                id: command_id,
+                mapping,
+                action: RouteAction {
+                    destination_id,
+                    tool_id: "qq.send_text".into(),
+                    revision: 1,
+                    allowed_senders: vec![],
+                    arguments: json!({"content":{"$command":"arguments"}}),
+                },
+                reply: Some(RouteReply::Fixed {
+                    text: "收到".into(),
+                }),
+            }],
+        });
+        route.targets = vec![
+            RouteTarget {
+                rule_id: command_rule(route.id, command_id, false),
+                destination_id,
+                branch: RouteBranch::Action,
+            },
+            RouteTarget {
+                rule_id: command_rule(route.id, command_id, true),
+                destination_id,
+                branch: RouteBranch::Reply,
+            },
+        ];
+        super::super::bindings::validate_routing(
+            &f.bindings.connections.read().unwrap(),
+            route,
+            f.event.scope.connection_id,
+        )
+        .unwrap();
+    }
+    f.queue().await;
+    for _ in 0..2 {
+        assert!(matches!(
+            f.run().await.outcome,
+            DeliveryOutcome::Submitted(_)
+        ));
+    }
+    assert_eq!(f.count(), 1);
+    let replies = f.fake.replies.lock().unwrap();
+    assert_eq!(replies.len(), 1);
+    assert!(
+        matches!(replies[0].parts.as_slice(),[ContentPart::Json(v)] if v["content"]=="收到" && v["msg_seq"]==2)
+    );
+    assert_eq!(
+        replies[0].destination_binding.as_ref().unwrap().config["id"],
+        "group_A"
+    );
+}
+
+#[tokio::test]
+async fn command_set_action_result_reply_runs_after_selected_action() {
+    use crate::domain::managed_route::{RouteAction, RouteBranch, RouteCommand, RouteReply};
+    let f = Fixture::new(false).await;
+    {
+        let mut snapshot = f.bindings.routes.write().unwrap();
+        let route = &mut snapshot.routes[0];
+        let destination_id = route.targets[0].destination_id;
+        let id = Uuid::new_v4();
+        route.processor = Some(RouteProcessor::CommandSet {
+            forward: false,
+            commands: vec![RouteCommand {
+                id,
+                mapping: route.command.clone().unwrap(),
+                action: RouteAction {
+                    destination_id,
+                    tool_id: "qq.send_text".into(),
+                    revision: 1,
+                    allowed_senders: vec![],
+                    arguments: json!({"content":{"$command":"arguments"}}),
+                },
+                reply: Some(RouteReply::ActionResult),
+            }],
+        });
+        route.targets = vec![RouteTarget {
+            rule_id: command_rule(route.id, id, false),
+            destination_id,
+            branch: RouteBranch::Action,
+        }];
+        super::super::bindings::validate_routing(
+            &f.bindings.connections.read().unwrap(),
+            route,
+            f.event.scope.connection_id,
+        )
+        .unwrap();
+    }
+    f.queue().await;
+    for _ in 0..2 {
+        assert!(matches!(
+            f.run().await.outcome,
+            DeliveryOutcome::Submitted(_)
+        ));
+    }
+    assert_eq!(f.count(), 1);
+    let replies = f.fake.replies.lock().unwrap();
+    assert!(
+        matches!(replies[0].parts.as_slice(),[ContentPart::Json(v)] if v["content"]=="done" && v["msg_seq"]==2)
+    );
 }

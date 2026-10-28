@@ -213,7 +213,8 @@ impl Pipeline {
                         || event_type.as_ref().is_some_and(|s| {
                             s.is_empty() || s.len() > 128 || s.chars().any(char::is_control)
                         })
-                        || destination_ids.is_empty()
+                        || (destination_ids.is_empty()
+                            && !matches!(processor, Some(crate::domain::managed_route::RouteProcessor::Combined { .. } | crate::domain::managed_route::RouteProcessor::CommandSet { .. })))
                         || destination_ids.len() > 32
                         || destination_ids
                             .iter()
@@ -264,18 +265,94 @@ impl Pipeline {
                             code: "unknown_route_source",
                         });
                     }
-                    let targets = destination_ids
-                        .iter()
-                        .map(|destination_id| RouteTarget {
-                            destination_id: *destination_id,
-                            rule_id: previous
+                    use crate::domain::managed_route::{RouteBranch, RouteProcessor, RouteReply};
+                    let mut branches: Vec<(Uuid, RouteBranch)> = match &processor {
+                        Some(RouteProcessor::Combined {
+                            forward,
+                            action,
+                            reply,
+                        }) => {
+                            if !forward && action.is_none() && reply.is_none()
+                                || (!forward && !destination_ids.is_empty())
+                                || (*forward && destination_ids.is_empty())
+                                || (matches!(reply, Some(RouteReply::ActionResult))
+                                    && action.is_none())
+                            {
+                                return Err(PortError::InvalidInput {
+                                    code: "invalid_route_processing",
+                                });
+                            }
+                            let mut entries = destination_ids
+                                .iter()
+                                .map(|id| (*id, RouteBranch::Forward))
+                                .collect::<Vec<_>>();
+                            if let Some(action) = action {
+                                entries.push((action.destination_id, RouteBranch::Action));
+                            }
+                            if matches!(reply, Some(RouteReply::Fixed { .. })) {
+                                let catalog = pipeline.connection_snapshot()?;
+                                let source = catalog
+                                    .connections
+                                    .iter()
+                                    .find(|c| c.id == source_id)
+                                    .ok_or(PortError::InvalidInput {
+                                        code: "route_reply_unavailable",
+                                    })?;
+                                entries.push((source.send_id(), RouteBranch::Reply));
+                            }
+                            entries
+                        }
+                        Some(RouteProcessor::CommandSet { forward, commands }) => {
+                            if commands.is_empty() || commands.len() > 16 || (!forward && !destination_ids.is_empty()) || (*forward && destination_ids.is_empty()) { return Err(PortError::InvalidInput { code:"invalid_route_processing" }); }
+                            let mut entries=destination_ids.iter().map(|id|(*id,RouteBranch::Forward)).collect::<Vec<_>>();
+                            for command in commands {
+                                entries.push((command.action.destination_id,RouteBranch::Action));
+                                if matches!(command.reply, Some(RouteReply::Fixed { .. })) {
+                                    let catalog=pipeline.connection_snapshot()?;
+                                    let source=catalog.connections.iter().find(|c|c.id==source_id).ok_or(PortError::InvalidInput{code:"route_reply_unavailable"})?;
+                                    entries.push((source.send_id(),RouteBranch::Reply));
+                                }
+                            }
+                            entries
+                        }
+                        _ => destination_ids
+                            .iter()
+                            .map(|id| (*id, RouteBranch::Legacy))
+                            .collect(),
+                    };
+                    if branches.len() > 32
+                        || branches.iter().any(|(id, _)| {
+                            !pipeline
+                                .all_targets()
+                                .iter()
+                                .any(|t| t.destination_id == *id)
+                        })
+                    {
+                        return Err(PortError::InvalidInput {
+                            code: "invalid_route",
+                        });
+                    }
+                    let mut command_rules = match &processor {
+                        Some(RouteProcessor::CommandSet {commands,..}) => commands.iter().flat_map(|c| {
+                            let mut ids=vec![super::command_actions::command_rule(input.route_id,c.id,false)];
+                            if matches!(c.reply,Some(RouteReply::Fixed { .. })) {ids.push(super::command_actions::command_rule(input.route_id,c.id,true));}
+                            ids
+                        }).collect::<Vec<_>>().into_iter(),
+                        _ => Vec::new().into_iter(),
+                    };
+                    let targets = branches
+                        .drain(..)
+                        .map(|(destination_id, branch)| RouteTarget {
+                            destination_id,
+                            branch,
+                            rule_id: if matches!(&processor,Some(RouteProcessor::CommandSet { .. })) && branch != RouteBranch::Forward { command_rules.next().expect("command branch") } else { previous
                                 .and_then(|r| {
-                                    r.targets
-                                        .iter()
-                                        .find(|t| t.destination_id == *destination_id)
+                                    r.targets.iter().find(|t| {
+                                        t.destination_id == destination_id && t.branch == branch
+                                    })
                                 })
                                 .map(|t| t.rule_id)
-                                .unwrap_or_else(Uuid::new_v4),
+                                .unwrap_or_else(Uuid::new_v4) },
                         })
                         .collect();
                     let route = ManagedRoute {

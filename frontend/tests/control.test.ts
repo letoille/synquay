@@ -306,14 +306,14 @@ test('connector route bindings survive edits and removed destinations cannot ret
  assert.throws(()=>parseDescriptor({adapter:'unknown',version:1,modes:[{id:'x',label:'X',fields:[{key:'cmd',label:'Cmd',control:'execute_script'}]}]}));
 });
 
-test('command action selection clears fan-out and requires an explicit sender grant',async()=>{
+test('command action selection clears fan-out and supports an optional sender grant',async()=>{
  const {changeProcessor,selectActionTarget,actionValid}=await import('../src/features/routes/actions.ts');
  const {routeSave,parseRoutes}=await import('../src/features/routes/api.ts');
  const route={id:'r',name:'Command',enabled:false,revision:1,event_type:null,source_id:'qq',targets:[{rule_id:'old',destination_id:'http'}]};
  const target={owner_connection_id:'qq',connection_id:'qq-send',destination_id:'qq-send',name:'QQ',protocol:'QQ',address:'QQ',actions:[{revision:1,target_required:false,consumes_reply:false,definition:{id:'qq.bot_info',description:'查询机器人信息',input_schema:{type:'object'},effect:'ReadOnly'}}]};
  let next=changeProcessor(route,'invoke_capability',[target]);
  assert.equal(next.targets.length,0);assert.equal(actionValid(next),false);
- next=selectActionTarget(next,target);assert.equal(next.processor?.kind,'invoke_capability');assert.equal(actionValid(next),false);
+ next=selectActionTarget(next,target);assert.equal(next.processor?.kind,'invoke_capability');assert.equal(actionValid(next),true);
  if(next.processor?.kind!=='invoke_capability')throw Error();
  next={...next,processor:{...next.processor,allowed_senders:['member_A']},command:{...next.command!,trigger:'/bot'}};
  assert.equal(actionValid(next),true);assert.equal(next.targets.length,1);
@@ -438,4 +438,53 @@ test('MQTT switch example keeps multiple state groups and validates tool identif
  assert.ok(capabilityErrors(example)['config.capabilities.tools.1.id']);
  example.resources[0].groups[1].fields[0].pointer='key';
  assert.ok(capabilityErrors(example)['config.capabilities.resources.0.groups.1.fields']);
+});
+
+
+test('capability drafts permit navigation while in-flight or modal operations remain guarded',async()=>{
+ const {blocksConnectionNavigation}=await import('../src/features/message-connections/navigation.ts');
+ const editing={blocked:true,capabilityPage:true,busy:false,pending:false,confirmDiscard:false};
+ assert.equal(blocksConnectionNavigation(editing),false);
+ assert.equal(blocksConnectionNavigation({...editing,capabilityPage:false}),true);
+ assert.equal(blocksConnectionNavigation({...editing,busy:true}),true);
+ assert.equal(blocksConnectionNavigation({...editing,pending:true}),true);
+ assert.equal(blocksConnectionNavigation({...editing,confirmDiscard:true}),true);
+});
+
+test('combined route keeps forward, action and reply independent in its save payload', async () => {
+  const {combineRoute,combinedValid}=await import('../src/features/routes/combined.ts');
+  const {routeSave}=await import('../src/features/routes/api.ts');
+  const base={id:'r',name:'switch',enabled:true,event_type:null,revision:1,source_id:'qq',message_types:['command' as const],processor:{kind:'invoke_capability' as const,tool_id:'off',revision:1,allowed_senders:[]},response:{kind:'source' as const},command:{text_pointer:'/content',trigger:'/off',mode:'exact' as const,output:{kind:'json' as const,event_type:'command.invoke',template:{value:0}}},targets:[{rule_id:'action-rule',destination_id:'mqtt'}]};
+  const route=combineRoute(base);
+  assert.equal(route.processor?.kind,'combined');
+  if(route.processor?.kind!=='combined')throw Error('expected combined');
+  assert.deepEqual(route.processor.action?.arguments,{value:0});
+  assert.equal(route.processor.reply?.kind,'action_result');
+  const both={...route,processor:{...route.processor,forward:true},targets:[...route.targets,{rule_id:'forward-rule',destination_id:'mqtt',branch:'forward' as const}]};
+  assert.equal(combinedValid(both),true);
+  const change=routeSave(both);
+  if(change.kind!=='save')throw Error('expected save');
+  assert.deepEqual(change.destination_ids,['mqtt']);
+  assert.equal(change.processor?.kind,'combined');
+  assert.equal(combinedValid({...both,processor:{...both.processor,action:null}}),false);
+  assert.equal(combinedValid({...both,processor:{...both.processor,action:null,reply:{kind:'fixed',text:'done'}}}),true);
+});
+
+test('multiple commands keep separate triggers, operations and reply modes', async () => {
+  const {makeCommandSet,commandSetValid}=await import('../src/features/routes/combined.ts');
+  const {routeSave,parseRoutes}=await import('../src/features/routes/api.ts');
+  const first={id:'r',name:'switch',enabled:true,event_type:null,revision:1,source_id:'qq',message_types:['command' as const],command:{text_pointer:'/content',trigger:'开启开关',mode:'exact' as const,output:{kind:'original' as const}},processor:{kind:'combined' as const,forward:false,action:{destination_id:'mqtt',tool_id:'on',revision:1,allowed_senders:[],arguments:{}},reply:{kind:'action_result' as const}},targets:[]};
+  const draft=makeCommandSet(first);if(draft.processor?.kind!=='command_set')throw Error('expected command set');
+  assert.equal(draft.processor.commands.length,2);
+  assert.equal(commandSetValid(draft),false);
+  const second={...draft.processor.commands[1],mapping:{...draft.processor.commands[1].mapping,trigger:'关闭开关'},action:{...draft.processor.commands[1].action,destination_id:'mqtt',tool_id:'off'}};
+  const ready={...draft,processor:{...draft.processor,commands:[draft.processor.commands[0],second]}};
+  assert.equal(commandSetValid(ready),true);
+  const change=routeSave(ready);if(change.kind!=='save'||change.processor?.kind!=='command_set')throw Error('wrong save');
+  assert.deepEqual(change.processor.commands.map(c=>[c.mapping.trigger,c.action.tool_id]),[['开启开关','on'],['关闭开关','off']]);
+  assert.deepEqual(change.destination_ids,[]);
+  const view=parseRoutes({available:true,reason:null,source_id:'qq',source_address:'/qq',counts:{},targets:[],snapshot:{revision:2,routes:[{...ready,targets:[{rule_id:'a',destination_id:'mqtt',branch:'action'},{rule_id:'b',destination_id:'mqtt',branch:'action'}]}]}});
+  const restored=view.snapshot!.routes[0];
+  assert.equal(restored.processor?.kind,'command_set');
+  assert.deepEqual(routeSave(restored),change);
 });

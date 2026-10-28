@@ -439,6 +439,37 @@ async fn qq_command_routes_to_mqtt_action_with_original_conversation_reply() {
     let id = Uuid::new_v4();
     let input=serde_json::from_value(json!({"operation_id":Uuid::new_v4(),"expected_revision":view.snapshot.revision,"route_id":id,"change":{"kind":"save","name":"QQ switch off","enabled":false,"source_id":qq.id,"event_type":null,"destination_ids":[target.destination_id],"response":{"kind":"source"},"processor":{"kind":"invoke_capability","tool_id":"off","revision":action.revision,"allowed_senders":["member_A"]},"command":{"text_pointer":"/content","trigger":"/off","mode":"exact","output":{"kind":"json","event_type":"command.invoke","template":{}}},"routing":{"source":{"adapter":"qq","version":1,"config":{"mode":"all_groups"}},"targets":{}}}})).unwrap();
     p.change_route(Uuid::from_u128(10), input).await.unwrap();
+    let combined_id = Uuid::new_v4();
+    let combined = serde_json::from_value(json!({"operation_id":Uuid::new_v4(),"expected_revision":view.snapshot.revision+1,"route_id":combined_id,"change":{"kind":"save","name":"Combined switch","enabled":false,"source_id":qq.id,"event_type":null,"destination_ids":[target.destination_id],"processor":{"kind":"combined","forward":true,"action":{"destination_id":target.destination_id,"tool_id":"off","revision":action.revision,"allowed_senders":[],"arguments":{}},"reply":{"kind":"action_result"}},"command":{"text_pointer":"/content","trigger":"/off","mode":"exact","output":{"kind":"original"}},"routing":{"source":{"adapter":"qq","version":1,"config":{"mode":"all_groups"}},"targets":{}}}})).unwrap();
+    p.change_route(Uuid::from_u128(10), combined).await.unwrap();
+    let snapshot = p.routes_view().await.unwrap().snapshot;
+    let combined = snapshot
+        .routes
+        .iter()
+        .find(|route| route.id == combined_id)
+        .unwrap();
+    assert_eq!(combined.targets.len(), 2);
+    assert_ne!(combined.targets[0].rule_id, combined.targets[1].rule_id);
+    assert_eq!(
+        combined.targets[0].destination_id,
+        combined.targets[1].destination_id
+    );
+    let commands_id = Uuid::new_v4();
+    let command_ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let commands:Vec<_>=command_ids.iter().zip(["/开","/关"]).map(|(id,trigger)|json!({"id":id,"mapping":{"text_pointer":"/content","trigger":trigger,"mode":"exact","output":{"kind":"original"}},"action":{"destination_id":target.destination_id,"tool_id":"off","revision":action.revision,"allowed_senders":[],"arguments":{}},"reply":{"kind":"action_result"}})).collect();
+    let input=serde_json::from_value(json!({"operation_id":Uuid::new_v4(),"expected_revision":snapshot.revision,"route_id":commands_id,"change":{"kind":"save","name":"Switch commands","enabled":false,"source_id":qq.id,"event_type":null,"destination_ids":[],"processor":{"kind":"command_set","forward":false,"commands":commands},"routing":{"source":{"adapter":"qq","version":1,"config":{"mode":"all_groups"}},"targets":{}}}})).unwrap();
+    p.change_route(Uuid::from_u128(10), input).await.unwrap();
+    let snapshot = p.routes_view().await.unwrap().snapshot;
+    let commands_route = snapshot
+        .routes
+        .iter()
+        .find(|r| r.id == commands_id)
+        .unwrap();
+    assert_eq!(commands_route.targets.len(), 2);
+    assert_ne!(
+        commands_route.targets[0].rule_id,
+        commands_route.targets[1].rule_id
+    );
     assert!(
         p.routes_view()
             .await
@@ -474,6 +505,15 @@ async fn qq_command_routes_to_mqtt_action_with_original_conversation_reply() {
             .routes
             .iter()
             .any(|r| r.id == id)
+    );
+    assert!(
+        !p.routes_view()
+            .await
+            .unwrap()
+            .snapshot
+            .routes
+            .iter()
+            .any(|r| r.id == commands_id)
     );
 }
 

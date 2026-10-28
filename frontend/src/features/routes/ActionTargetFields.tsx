@@ -15,7 +15,7 @@ export function ActionTargetFields({route,targets,onChange}:{route:Route;targets
       {action&&<details><summary>{t('参数格式')}</summary><pre className="mono action-schema">{JSON.stringify(action.definition.input_schema,null,2)}</pre></details>}
       {action?.target_required&&<RoutingFields descriptor={target.routing} connectionId={target.owner_connection_id} value={route.routing?.targets[target.destination_id]} onChange={binding=>onChange({...route,routing:{source:route.routing?.source??null,targets:{...route.routing?.targets,[target.destination_id]:binding}}})}/>}
     </>}
-    <label><span>{t('允许触发的用户')}</span><textarea className="ui-input mono" rows={3} maxLength={13000} placeholder={t('用户 OpenID，每行一个')} value={p.allowed_senders.join('\n')} onChange={e=>update({allowed_senders:e.target.value.split('\n')})} onBlur={()=>update({allowed_senders:p.allowed_senders.map(s=>s.trim()).filter(Boolean)})}/></label>
+    <label><span>{t('允许触发的用户')}</span><textarea className="ui-input mono" rows={3} maxLength={13000} placeholder={t('留空允许来源范围内的所有用户；或每行填写一个 OpenID')} value={p.allowed_senders.join('\n')} onChange={e=>update({allowed_senders:e.target.value.split('\n')})} onBlur={()=>update({allowed_senders:p.allowed_senders.map(s=>s.trim()).filter(Boolean)})}/></label>
 
   </div>;
 }

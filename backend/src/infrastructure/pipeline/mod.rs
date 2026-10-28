@@ -224,6 +224,7 @@ impl Pipeline {
                         |(rule_id, destination_id)| crate::domain::managed_route::RouteTarget {
                             rule_id,
                             destination_id,
+                            branch: Default::default(),
                         },
                     )
                     .collect(),

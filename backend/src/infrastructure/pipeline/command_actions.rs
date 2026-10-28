@@ -21,7 +21,7 @@ use crate::{
         connector::ConnectionScope,
         delivery::*,
         identity::{Action, Identity, Resource},
-        managed_route::{ManagedRoute, RouteProcessor, RouteResponse},
+        managed_route::{ManagedRoute, RouteBranch, RouteProcessor, RouteReply, RouteResponse},
         message::*,
         routing::RouteRule,
     },
@@ -46,6 +46,8 @@ pub(super) struct CommandJob {
     pub revision: u64,
     pub source: ConnectionScope,
     pub event_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<Uuid>,
 }
 impl CommandJob {
     pub fn message(&self) -> Result<Message, PortError> {
@@ -78,11 +80,211 @@ pub(super) fn definitions(config: &ConnectionConfig) -> Vec<ConnectionAction> {
     crate::infrastructure::connectors::capability_catalog::operations(config)
 }
 
+pub(super) fn command_rule(route_id: Uuid, command_id: Uuid, reply: bool) -> Uuid {
+    stable_id(&json!([
+        "route-command-branch",
+        route_id,
+        command_id,
+        reply
+    ]))
+}
+fn action_projection(
+    route: &ManagedRoute,
+    destination: Uuid,
+    rule_id: Option<Uuid>,
+) -> Option<ManagedRoute> {
+    let mut result = route.clone();
+    if let Some(RouteProcessor::CommandSet { commands, .. }) = &route.processor {
+        let command = commands.iter().find(|c| {
+            Some(command_rule(route.id, c.id, false)) == rule_id
+                && c.action.destination_id == destination
+        })?;
+        result.targets.retain(|t| Some(t.rule_id) == rule_id);
+        result.processor = Some(RouteProcessor::InvokeCapability {
+            tool_id: command.action.tool_id.clone(),
+            revision: command.action.revision,
+            allowed_senders: command.action.allowed_senders.clone(),
+        });
+        result.response = Some(if matches!(command.reply, Some(RouteReply::ActionResult)) {
+            RouteResponse::Source
+        } else {
+            RouteResponse::None
+        });
+        let mut mapping = command.mapping.clone();
+        mapping.output = crate::domain::command::CommandOutput::Json {
+            event_type: "command.invoke".into(),
+            template: command.action.arguments.clone(),
+        };
+        result.command = Some(mapping);
+    }
+    if let Some(RouteProcessor::Combined {
+        action: Some(action),
+        reply,
+        ..
+    }) = &route.processor
+    {
+        if action.destination_id != destination {
+            return None;
+        }
+        result
+            .targets
+            .retain(|t| t.branch == RouteBranch::Action && t.destination_id == destination);
+        result.processor = Some(RouteProcessor::InvokeCapability {
+            tool_id: action.tool_id.clone(),
+            revision: action.revision,
+            allowed_senders: action.allowed_senders.clone(),
+        });
+        result.response = Some(if matches!(reply, Some(RouteReply::ActionResult)) {
+            RouteResponse::Source
+        } else {
+            RouteResponse::None
+        });
+        result.command.as_mut()?.output = crate::domain::command::CommandOutput::Json {
+            event_type: "command.invoke".into(),
+            template: action.arguments.clone(),
+        };
+    }
+    if result.targets.len() == 1
+        && result.targets[0].destination_id == destination
+        && matches!(
+            result.processor,
+            Some(RouteProcessor::InvokeCapability { .. })
+        )
+    {
+        Some(result)
+    } else {
+        None
+    }
+}
+
 pub(super) fn validate(
     catalog: &ConnectionSnapshot,
     r: &ManagedRoute,
     default_source: Uuid,
 ) -> Result<(), PortError> {
+    if let Some(RouteProcessor::CommandSet { forward, commands }) = &r.processor {
+        if commands.is_empty()
+            || commands.len() > 16
+            || (*forward != r.targets.iter().any(|t| t.branch == RouteBranch::Forward))
+            || commands
+                .iter()
+                .map(|c| c.id)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != commands.len()
+        {
+            return Err(invalid("invalid_command_action"));
+        }
+        for command in commands {
+            command
+                .mapping
+                .validate()
+                .map_err(|_| invalid("invalid_command_mapping"))?;
+            let mut projected = r.clone();
+            let rule = command_rule(r.id, command.id, false);
+            projected
+                .targets
+                .retain(|t| t.rule_id == rule && t.destination_id == command.action.destination_id);
+            projected.processor = Some(RouteProcessor::InvokeCapability {
+                tool_id: command.action.tool_id.clone(),
+                revision: command.action.revision,
+                allowed_senders: command.action.allowed_senders.clone(),
+            });
+            projected.response = Some(if matches!(command.reply, Some(RouteReply::ActionResult)) {
+                RouteResponse::Source
+            } else {
+                RouteResponse::None
+            });
+            let mut mapping = command.mapping.clone();
+            mapping.output = crate::domain::command::CommandOutput::Json {
+                event_type: "command.invoke".into(),
+                template: command.action.arguments.clone(),
+            };
+            mapping
+                .validate()
+                .map_err(|_| invalid("invalid_command_mapping"))?;
+            projected.command = Some(mapping);
+            validate(catalog, &projected, default_source)?;
+            if let Some(RouteReply::Fixed { text }) = &command.reply {
+                let source = catalog
+                    .connections
+                    .iter()
+                    .find(|c| c.id == r.source_id.unwrap_or(default_source))
+                    .ok_or(invalid("route_reply_unavailable"))?;
+                if text.trim().is_empty()
+                    || text.len() > 4000
+                    || !adapter(&source.config).supports_reply()
+                    || !r.targets.iter().any(|t| {
+                        t.rule_id == command_rule(r.id, command.id, true)
+                            && t.destination_id == source.send_id()
+                    })
+                {
+                    return Err(invalid("invalid_direct_response"));
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let Some(RouteProcessor::Combined {
+        forward,
+        action,
+        reply,
+    }) = &r.processor
+    {
+        if !forward && action.is_none() && reply.is_none()
+            || (*forward != r.targets.iter().any(|t| t.branch == RouteBranch::Forward))
+            || matches!(reply, Some(RouteReply::ActionResult)) && action.is_none()
+        {
+            return Err(invalid("invalid_route_processing"));
+        }
+        if let Some(RouteReply::Fixed { text }) = reply {
+            if text.trim().is_empty() || text.len() > 4000 || r.command.is_none() {
+                return Err(invalid("invalid_direct_response"));
+            }
+            let source = catalog
+                .connections
+                .iter()
+                .find(|c| c.id == r.source_id.unwrap_or(default_source))
+                .ok_or(invalid("route_reply_unavailable"))?;
+            if !adapter(&source.config).supports_reply()
+                || !r
+                    .targets
+                    .iter()
+                    .any(|t| t.branch == RouteBranch::Reply && t.destination_id == source.send_id())
+            {
+                return Err(invalid("route_reply_unavailable"));
+            }
+        }
+        if let Some(action) = action {
+            let mut projected = r.clone();
+            projected.targets.retain(|t| {
+                t.branch == RouteBranch::Action && t.destination_id == action.destination_id
+            });
+            projected.processor = Some(RouteProcessor::InvokeCapability {
+                tool_id: action.tool_id.clone(),
+                revision: action.revision,
+                allowed_senders: action.allowed_senders.clone(),
+            });
+            projected.response = Some(if matches!(reply, Some(RouteReply::ActionResult)) {
+                RouteResponse::Source
+            } else {
+                RouteResponse::None
+            });
+            let command = projected
+                .command
+                .as_mut()
+                .ok_or(invalid("invalid_command_action"))?;
+            command.output = crate::domain::command::CommandOutput::Json {
+                event_type: "command.invoke".into(),
+                template: action.arguments.clone(),
+            };
+            command
+                .validate()
+                .map_err(|_| invalid("invalid_command_mapping"))?;
+            validate(catalog, &projected, default_source)?;
+        }
+        return Ok(());
+    }
     if matches!(r.processor, Some(RouteProcessor::Respond)) {
         let source = catalog
             .connections
@@ -180,18 +382,15 @@ impl ActionSink {
             .map_err(|_| PortError::Unavailable)?
             .routes
             .iter()
-            .find(|r| {
+            .filter(|r| {
                 r.id == j.route_id
                     && r.enabled
                     && r.revision == j.revision
                     && r.source_id
                         .unwrap_or(self.runtime.bindings.source.connection_id)
                         == j.source.connection_id
-                    && r.targets.len() == 1
-                    && r.targets[0].destination_id == self.scope.connection_id
-                    && matches!(r.processor, Some(RouteProcessor::InvokeCapability { .. }))
             })
-            .cloned()
+            .find_map(|r| action_projection(r, self.scope.connection_id, j.rule_id))
             .ok_or(PortError::PermissionDenied)
     }
     async fn execute(
@@ -247,7 +446,8 @@ impl ActionSink {
             sender.namespace,
             sender.id
         ]));
-        let allow = sender.allowed && allowed_senders.contains(&sender.id);
+        let allow =
+            sender.allowed && (allowed_senders.is_empty() || allowed_senders.contains(&sender.id));
         operation.principal_id = principal;
         let access = AccessContext {
             identity: Identity {
@@ -299,12 +499,22 @@ impl ActionSink {
         } else {
             self.runtime.bindings.target_binding(&event, &rule)?
         };
-        let invocation_id = stable_id(&json!([
-            "command-invocation",
-            event.scope,
-            event.event_id,
-            route.id
-        ]));
+        let invocation_id = if let Some(rule_id) = j.rule_id {
+            stable_id(&json!([
+                "command-invocation",
+                event.scope,
+                event.event_id,
+                route.id,
+                rule_id
+            ]))
+        } else {
+            stable_id(&json!([
+                "command-invocation",
+                event.scope,
+                event.event_id,
+                route.id
+            ]))
+        };
         let report=InvocationService{validator:self.validator.clone(),governance,ledger:Some(self.runtime.store.clone())}.invoke(&access,InvocationRequest{
             scope:self.scope,definition:action.definition,executor:self.actions.executor(target.clone())?,invocation_id,arguments:arguments.clone(),
             intent:json!({"route":route.id,"revision":route.revision,"event":event.event_id,"scope":self.scope,"tool":tool_id,"capability_revision":revision,"target":target,"arguments":arguments}),

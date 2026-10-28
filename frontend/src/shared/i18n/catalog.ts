@@ -1,5 +1,14 @@
 // Built-in console copy only. User content and service payloads are never translated.
 export const catalog: Record<string, readonly [string, string, string]> = {
+"不回复":["No reply", "返信しない", "Sin respuesta"],
+"指令与操作":["Commands and actions", "コマンドと操作", "Comandos y acciones"],
+"添加指令":["Add command", "コマンドを追加", "Añadir comando"],
+"指令 {0}":["Command {0}", "コマンド {0}", "Comando {0}"],
+"按顺序匹配，只执行第一条匹配的指令。":["Commands are matched in order; only the first match runs.", "順番に照合し、最初に一致したコマンドのみを実行します。", "Los comandos se comprueban en orden; solo se ejecuta el primero que coincida."],
+"转发目标":["Forward destinations", "転送先", "Destinos de reenvío"],
+"固定文本":["Fixed text", "固定テキスト", "Texto fijo"],
+"能力执行结果":["Action result", "操作の実行結果", "Resultado de la acción"],
+"文本":["Text", "テキスト", "Texto"],
 "允许读取此连接的全部近期消息":["Allow reading all recent messages from this connection", "この接続の最近のメッセージの読み取りを許可", "Permitir leer mensajes recientes de esta conexión"],
 "启用近期消息池":["Enable recent messages", "最近のメッセージを有効化", "Activar mensajes recientes"],
 "消息保存在内存中，重启后清空；不影响持久化事件保留。":["Messages are kept in memory and cleared on restart; persistent event retention is separate.", "メッセージはメモリに保存され再起動時に消去されます。永続イベントの保持とは別です。", "Los mensajes se conservan en memoria y se borra al reiniciar; la retención de eventos persistentes es independiente."],
@@ -103,6 +112,8 @@ export const catalog: Record<string, readonly [string, string, string]> = {
 "请检查能力、调用参数、用户授权和回复范围。": ["Check the capability, arguments, sender permissions and reply scope.", "機能、引数、ユーザー権限と返信範囲を確認してください。", "Comprueba la capacidad, los argumentos, los permisos y el ámbito de respuesta."],
 "未开始的能力调用将停止，已完成的调用不会撤销。": ["Pending capability calls will stop. Completed calls cannot be undone.", "未実行の機能呼び出しは停止します。完了した操作は取り消されません。", "Las llamadas pendientes se detendrán. Las operaciones completadas no se desharán."],
 "回复原会话": ["Reply to source conversation", "元の会話に返信", "Responder en la conversación original"],
+"留空允许来源范围内的所有用户；或每行填写一个 OpenID": ["Leave empty to allow all users in the selected source, or enter one OpenID per line", "空欄の場合は選択した送信元のすべてのユーザーを許可。制限する場合は OpenID を1行に1つ入力", "Deja vacío para permitir a todos los usuarios del origen o introduce un OpenID por línea"],
+"编辑处理": ["Edit processing", "処理を編集", "Editar procesamiento"],
 "用户 OpenID，每行一个": ["User OpenID, one per line", "ユーザー OpenID（1 行に 1 件）", "OpenID de usuario, uno por línea"],
 "允许触发的用户": ["Allowed senders", "実行を許可するユーザー", "Usuarios autorizados"],
 "参数格式": ["Parameter schema", "パラメーター形式", "Esquema de parámetros"],
